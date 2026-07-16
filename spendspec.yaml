@@ -18,7 +18,7 @@ projects:
     features:
       default:
         monthly_budget: 2
-        max_per_request: 2.00
+        max_per_request: 2.50
         allowed_models:
           - claude-sonnet-5
           - claude-haiku-4-5-20251001

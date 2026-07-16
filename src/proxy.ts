@@ -43,7 +43,10 @@ export class SpendSpecClient {
       fallbackModel: featureConfig.fallbackModel,
     });
 
-    const reservedAmount = computeCost(model, options.estimatedInputTokens, options.estimatedOutputTokens) * 1.2;
+    const reservedAmount = Math.min(
+      featureConfig.maxPerRequest,
+      computeCost(model, options.estimatedInputTokens, options.estimatedOutputTokens) * 1.2
+    );
 
     const lease = this.runtime.leaseManager.reserve(options.project, options.feature, reservedAmount);
 

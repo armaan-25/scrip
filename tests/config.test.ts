@@ -9,7 +9,7 @@ describe('loadConfig', () => {
     expect(config.projects['research-agent'].monthlyBudget).toBe(2);
     expect(config.projects['research-agent'].features['default']).toEqual({
       monthlyBudget: 2,
-      maxPerRequest: 2.0,
+      maxPerRequest: 2.5,
       allowedModels: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
       fallbackModel: 'claude-haiku-4-5-20251001',
       onLimit: 'degrade',
