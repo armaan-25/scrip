@@ -60,6 +60,12 @@ export class SpendSpecClient {
         degraded = true;
         message = await this.callModel(model, options);
         actualCost = computeCost(model, message.usage.input_tokens, message.usage.output_tokens);
+
+        if (actualCost > lease.reservedAmount) {
+          throw new SpendLimitExceededError(
+            `Task "${options.task}" exceeded its $${lease.reservedAmount.toFixed(4)} lease even after degrading to fallback model (actual cost $${actualCost.toFixed(4)})`
+          );
+        }
       } else if (featureConfig.onLimit === 'request-approval') {
         const shortfall = actualCost - lease.reservedAmount;
         const result = requestMoreBudget(
