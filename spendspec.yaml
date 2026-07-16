@@ -1,0 +1,26 @@
+team: hackathon-demo
+projects:
+  support-agent:
+    monthly_budget: 10
+    warning_threshold: 0.8
+    features:
+      default:
+        monthly_budget: 10
+        max_per_request: 1.00
+        allowed_models:
+          - claude-sonnet-5
+          - claude-haiku-4-5-20251001
+        fallback_model: claude-haiku-4-5-20251001
+        on_limit: degrade
+  research-agent:
+    monthly_budget: 2
+    warning_threshold: 0.8
+    features:
+      default:
+        monthly_budget: 2
+        max_per_request: 2.00
+        allowed_models:
+          - claude-sonnet-5
+          - claude-haiku-4-5-20251001
+        fallback_model: claude-haiku-4-5-20251001
+        on_limit: degrade
