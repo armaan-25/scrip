@@ -2,72 +2,57 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SpendSpecRuntime } from '../src/runtime.js';
-import { estimateSpend, getSpendPolicy, recordUsage, requestMoreBudget } from '../src/handlers.js';
+import { authorizeTask, delegateTaskAllowance, getBudgetPolicy, revokeTask, settleTask } from '../src/handlers.js';
+import { InvalidCredentialError } from '../src/lease.js';
+import { SpecSpendRuntime } from '../src/runtime.js';
 
 let tmpDir: string;
-let runtime: SpendSpecRuntime;
+let runtime: SpecSpendRuntime;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spendspec-handlers-'));
-  runtime = new SpendSpecRuntime('spendspec.yaml', path.join(tmpDir, 'store.json'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specspend-handlers-'));
+  runtime = new SpecSpendRuntime('specspend.yaml', path.join(tmpDir, 'ramp.json'));
 });
+afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-});
-
-describe('getSpendPolicy', () => {
-  it('returns remaining budget and task policy for a project/feature', () => {
-    const policy = getSpendPolicy(runtime, 'research-agent', 'default');
-    expect(policy.projectBudget).toEqual({ limit: 2, spent: 0, remaining: 2 });
-    expect(policy.taskPolicy.allowedModels).toEqual(['claude-sonnet-5', 'claude-haiku-4-5-20251001']);
-    expect(policy.taskPolicy.fallbackModel).toBe('claude-haiku-4-5-20251001');
-  });
-});
-
-describe('estimateSpend', () => {
-  it('multiplies per-call cost by numCalls', () => {
-    const estimate = estimateSpend(runtime, {
-      project: 'research-agent',
-      feature: 'default',
-      model: 'claude-haiku-4-5-20251001',
-      estimatedInputTokens: 1000,
-      estimatedOutputTokens: 500,
-      numCalls: 5,
+describe('task credential handlers', () => {
+  it('exposes Ramp policy and available task authorization', () => {
+    expect(getBudgetPolicy(runtime, 'research')).toMatchObject({
+      rampBudgetId: 'ramp-budget-research',
+      monthlyLimit: 100,
+      availableToAuthorize: 100,
+      maxTaskAllowance: 10,
     });
-    const perCall = (1000 / 1_000_000) * 1.0 + (500 / 1_000_000) * 5.0;
-    expect(estimate).toBeCloseTo(perCall * 5);
-  });
-});
-
-describe('requestMoreBudget', () => {
-  it('auto-approves amounts under the ceiling and grants budget', () => {
-    const result = requestMoreBudget(runtime, 'research-agent', 'default', 0.5, 'overrun');
-    expect(result).toEqual({ approved: true, status: 'approved' });
-    expect(runtime.leaseManager.getRemainingBudget('research-agent', 'default')).toBeCloseTo(2.5);
   });
 
-  it('marks amounts over the ceiling as pending approval without granting', () => {
-    const result = requestMoreBudget(runtime, 'research-agent', 'default', 5, 'big overrun');
-    expect(result).toEqual({ approved: false, status: 'pending_approval' });
-    expect(runtime.leaseManager.getRemainingBudget('research-agent', 'default')).toBe(2);
-  });
-});
-
-describe('recordUsage', () => {
-  it('writes a receipt and releases the lease', () => {
-    const lease = runtime.leaseManager.reserve('research-agent', 'default', 1.0);
-    recordUsage(runtime, {
-      leaseId: lease.leaseId,
-      team: runtime.config.team,
-      task: 'test task',
-      actualCost: 0.4,
-      model: 'claude-haiku-4-5-20251001',
-      costCenter: 'Product COGS',
+  it('authorizes, delegates, and settles a task', () => {
+    const root = authorizeTask(runtime, {
+      budget: 'research',
+      taskId: 'task-1',
+      task: 'Review code',
+      allowance: 2,
     });
+    const child = delegateTaskAllowance(runtime, {
+      parentCredential: root.credential,
+      agentId: 'child-1',
+      allowance: 0.5,
+    });
+    expect(child.lease.authorizationId).toBe(root.authorization.authorizationId);
+    expect(settleTask(runtime, root.authorization.authorizationId)).toMatchObject({
+      authorized: 2,
+      actual: 0,
+      childAgents: 1,
+    });
+  });
 
-    expect(runtime.store.getSpend('research-agent', 'default')).toBeCloseTo(0.4);
-    expect(runtime.leaseManager.getRemainingBudget('research-agent', 'default')).toBeCloseTo(1.6);
+  it('revokes every credential in the task tree', () => {
+    const root = authorizeTask(runtime, {
+      budget: 'research',
+      taskId: 'task-1',
+      task: 'Review code',
+      allowance: 1,
+    });
+    revokeTask(runtime, root.authorization.authorizationId);
+    expect(() => runtime.authorizations.getLeaseForCredential(root.credential)).toThrow(InvalidCredentialError);
   });
 });

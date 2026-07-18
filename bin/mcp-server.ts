@@ -1,8 +1,8 @@
-import { SpendSpecRuntime } from '../src/runtime.js';
 import { startMcpServer } from '../src/mcp-server.js';
+import { SpecSpendRuntime } from '../src/runtime.js';
 
-const runtime = new SpendSpecRuntime(
-  process.env.SPENDSPEC_CONFIG ?? 'spendspec.yaml',
-  process.env.SPENDSPEC_STORE ?? '.spendspec/store.json'
+const runtime = new SpecSpendRuntime(
+  process.env.SPECSPEND_CONFIG ?? 'specspend.yaml',
+  process.env.SPECSPEND_STORE ?? '.specspend/ramp.json'
 );
 startMcpServer(runtime);

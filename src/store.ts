@@ -1,27 +1,48 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export interface Receipt {
+export interface ModelUsage {
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
+export interface TaskReceipt {
+  receiptId: string;
+  authorizationId: string;
+  rampEntityId: string;
+  rampBudgetId: string;
   team: string;
-  project: string;
-  feature: string;
+  taskId: string;
   task: string;
   authorized: number;
   actual: number;
-  model: string;
+  returned: number;
+  childAgents: number;
+  requestCount: number;
+  modelUsage: ModelUsage[];
   costCenter: string;
-  timestamp: string;
+  startedAt: string;
+  settledAt: string;
 }
 
 interface StoreData {
-  receipts: Receipt[];
+  receipts: TaskReceipt[];
+}
+
+export interface RampGateway {
+  getReportedSpend(rampBudgetId: string, sinceMonth?: string): number;
+  reportTaskUsage(receipt: TaskReceipt): void;
 }
 
 function currentMonth(): string {
-  return new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  return new Date().toISOString().slice(0, 7);
 }
 
-export class MockRampStore {
+/** Local Ramp boundary used by the demo. Replace this adapter, not the lease engine. */
+export class MockRampGateway implements RampGateway {
   constructor(private filePath: string) {
     if (!fs.existsSync(this.filePath)) {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
@@ -37,21 +58,24 @@ export class MockRampStore {
     fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2) + '\n');
   }
 
-  addReceipt(receipt: Receipt): void {
+  reportTaskUsage(receipt: TaskReceipt): void {
     const data = this.load();
     data.receipts.push(receipt);
     this.save(data);
     console.log(
-      `[receipt] team=${receipt.team} project=${receipt.project} feature=${receipt.feature} ` +
-        `task="${receipt.task}" authorized=$${receipt.authorized.toFixed(4)} actual=$${receipt.actual.toFixed(4)} ` +
-        `model=${receipt.model} costCenter=${receipt.costCenter}`
+      `[ramp] budget=${receipt.rampBudgetId} task=${receipt.taskId} ` +
+        `authorized=$${receipt.authorized.toFixed(4)} actual=$${receipt.actual.toFixed(4)} ` +
+        `returned=$${receipt.returned.toFixed(4)}`
     );
   }
 
-  getSpend(project: string, feature: string, sinceMonth: string = currentMonth()): number {
-    const data = this.load();
-    return data.receipts
-      .filter((r) => r.project === project && r.feature === feature && r.timestamp.startsWith(sinceMonth))
-      .reduce((sum, r) => sum + r.actual, 0);
+  getReportedSpend(rampBudgetId: string, sinceMonth: string = currentMonth()): number {
+    return this.load().receipts
+      .filter((receipt) => receipt.rampBudgetId === rampBudgetId && receipt.settledAt.startsWith(sinceMonth))
+      .reduce((sum, receipt) => sum + receipt.actual, 0);
+  }
+
+  getReceipts(): TaskReceipt[] {
+    return this.load().receipts;
   }
 }

@@ -1,65 +1,70 @@
 import fs from 'node:fs';
 import yaml from 'js-yaml';
 
-export interface FeatureConfig {
-  monthlyBudget: number;
-  maxPerRequest: number;
+export type LimitBehavior = 'degrade' | 'request-approval' | 'deny';
+
+export interface RampBudgetConfig {
+  rampBudgetId: string;
+  monthlyLimit: number;
+  maxTaskAllowance: number;
   allowedModels: string[];
   fallbackModel: string;
-  onLimit: 'degrade' | 'request-approval' | 'throw';
+  onLimit: LimitBehavior;
+  taskTtlSeconds: number;
+  costCenter: string;
 }
 
-export interface ProjectConfig {
-  monthlyBudget: number;
-  warningThreshold: number;
-  features: Record<string, FeatureConfig>;
-}
-
-export interface SpendConfig {
+export interface SpecSpendConfig {
   team: string;
-  projects: Record<string, ProjectConfig>;
+  rampEntityId: string;
+  budgets: Record<string, RampBudgetConfig>;
 }
 
-interface RawFeature {
-  monthly_budget: number;
-  max_per_request: number;
+interface RawBudget {
+  ramp_budget_id: string;
+  monthly_limit: number;
+  max_task_allowance: number;
   allowed_models: string[];
   fallback_model: string;
-  on_limit: 'degrade' | 'request-approval' | 'throw';
-}
-
-interface RawProject {
-  monthly_budget: number;
-  warning_threshold: number;
-  features: Record<string, RawFeature>;
+  on_limit: LimitBehavior;
+  task_ttl_seconds: number;
+  cost_center: string;
 }
 
 interface RawConfig {
   team: string;
-  projects: Record<string, RawProject>;
+  ramp_entity_id: string;
+  budgets: Record<string, RawBudget>;
 }
 
-export function loadConfig(filePath: string): SpendConfig {
+export function loadConfig(filePath: string): SpecSpendConfig {
   const raw = yaml.load(fs.readFileSync(filePath, 'utf-8')) as RawConfig;
+  if (!raw?.team || !raw.ramp_entity_id || !raw.budgets) {
+    throw new Error('Config must define team, ramp_entity_id, and budgets');
+  }
 
-  const projects: Record<string, ProjectConfig> = {};
-  for (const [projectName, rawProject] of Object.entries(raw.projects)) {
-    const features: Record<string, FeatureConfig> = {};
-    for (const [featureName, rawFeature] of Object.entries(rawProject.features)) {
-      features[featureName] = {
-        monthlyBudget: rawFeature.monthly_budget,
-        maxPerRequest: rawFeature.max_per_request,
-        allowedModels: rawFeature.allowed_models,
-        fallbackModel: rawFeature.fallback_model,
-        onLimit: rawFeature.on_limit,
-      };
+  const budgets: Record<string, RampBudgetConfig> = {};
+  for (const [name, budget] of Object.entries(raw.budgets)) {
+    if (budget.monthly_limit <= 0 || budget.max_task_allowance <= 0) {
+      throw new Error(`Budget "${name}" limits must be positive`);
     }
-    projects[projectName] = {
-      monthlyBudget: rawProject.monthly_budget,
-      warningThreshold: rawProject.warning_threshold,
-      features,
+    if (budget.max_task_allowance > budget.monthly_limit) {
+      throw new Error(`Budget "${name}" max_task_allowance cannot exceed monthly_limit`);
+    }
+    if (!budget.allowed_models.includes(budget.fallback_model)) {
+      throw new Error(`Budget "${name}" fallback_model must be in allowed_models`);
+    }
+    budgets[name] = {
+      rampBudgetId: budget.ramp_budget_id,
+      monthlyLimit: budget.monthly_limit,
+      maxTaskAllowance: budget.max_task_allowance,
+      allowedModels: budget.allowed_models,
+      fallbackModel: budget.fallback_model,
+      onLimit: budget.on_limit,
+      taskTtlSeconds: budget.task_ttl_seconds,
+      costCenter: budget.cost_center,
     };
   }
 
-  return { team: raw.team, projects };
+  return { team: raw.team, rampEntityId: raw.ramp_entity_id, budgets };
 }

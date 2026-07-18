@@ -1,26 +1,23 @@
-import { loadConfig, type FeatureConfig, type ProjectConfig, type SpendConfig } from './config.js';
-import { MockRampStore } from './store.js';
-import { LeaseManager } from './lease.js';
+import { loadConfig, type RampBudgetConfig, type SpecSpendConfig } from './config.js';
+import { TaskAuthorizationManager } from './lease.js';
 import { BudgetRouter } from './router.js';
+import { MockRampGateway, type RampGateway } from './store.js';
 
-export class SpendSpecRuntime {
-  readonly config: SpendConfig;
-  readonly store: MockRampStore;
-  readonly leaseManager: LeaseManager;
-  readonly router: BudgetRouter;
+export class SpecSpendRuntime {
+  readonly config: SpecSpendConfig;
+  readonly ramp: RampGateway;
+  readonly authorizations: TaskAuthorizationManager;
+  readonly router = new BudgetRouter();
 
-  constructor(configPath: string, storePath: string) {
+  constructor(configPath: string, storePath: string, ramp?: RampGateway) {
     this.config = loadConfig(configPath);
-    this.store = new MockRampStore(storePath);
-    this.leaseManager = new LeaseManager(this.config, this.store);
-    this.router = new BudgetRouter();
+    this.ramp = ramp ?? new MockRampGateway(storePath);
+    this.authorizations = new TaskAuthorizationManager(this.config, this.ramp);
   }
 
-  getFeatureConfig(project: string, feature: string): { projectConfig: ProjectConfig; featureConfig: FeatureConfig } {
-    const projectConfig = this.config.projects[project];
-    if (!projectConfig) throw new Error(`Unknown project "${project}"`);
-    const featureConfig = projectConfig.features[feature];
-    if (!featureConfig) throw new Error(`Unknown feature "${feature}" in project "${project}"`);
-    return { projectConfig, featureConfig };
+  getBudget(name: string): RampBudgetConfig {
+    const budget = this.config.budgets[name];
+    if (!budget) throw new Error(`Unknown Ramp budget "${name}"`);
+    return budget;
   }
 }

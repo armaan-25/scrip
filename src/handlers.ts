@@ -1,91 +1,38 @@
-import type { SpendSpecRuntime } from './runtime.js';
-import { computeCost } from './pricing.js';
+import type { SpecSpendRuntime } from './runtime.js';
 
-export interface SpendPolicyResult {
-  projectBudget: { limit: number; spent: number; remaining: number };
-  taskPolicy: {
-    maxPerRequest: number;
-    allowedModels: string[];
-    fallbackModel: string;
-    onLimit: string;
-  };
-}
-
-export function getSpendPolicy(runtime: SpendSpecRuntime, project: string, feature: string): SpendPolicyResult {
-  const { featureConfig } = runtime.getFeatureConfig(project, feature);
-  const spent = runtime.store.getSpend(project, feature);
-  const remaining = runtime.leaseManager.getRemainingBudget(project, feature);
+export function getBudgetPolicy(runtime: SpecSpendRuntime, budgetName: string) {
+  const budget = runtime.getBudget(budgetName);
+  const reportedSpend = runtime.ramp.getReportedSpend(budget.rampBudgetId);
   return {
-    projectBudget: { limit: featureConfig.monthlyBudget, spent, remaining },
-    taskPolicy: {
-      maxPerRequest: featureConfig.maxPerRequest,
-      allowedModels: featureConfig.allowedModels,
-      fallbackModel: featureConfig.fallbackModel,
-      onLimit: featureConfig.onLimit,
-    },
+    rampBudgetId: budget.rampBudgetId,
+    monthlyLimit: budget.monthlyLimit,
+    reportedSpend,
+    availableToAuthorize: runtime.authorizations.getBudgetRemaining(budgetName),
+    maxTaskAllowance: budget.maxTaskAllowance,
+    allowedModels: budget.allowedModels,
+    fallbackModel: budget.fallbackModel,
+    onLimit: budget.onLimit,
   };
 }
 
-export interface EstimateSpendParams {
-  project: string;
-  feature: string;
-  model: string;
-  estimatedInputTokens: number;
-  estimatedOutputTokens: number;
-  numCalls: number;
+export function authorizeTask(
+  runtime: SpecSpendRuntime,
+  params: { budget: string; taskId: string; task: string; allowance: number; ttlMs?: number }
+) {
+  return runtime.authorizations.authorizeTask(params);
 }
 
-export function estimateSpend(runtime: SpendSpecRuntime, params: EstimateSpendParams): number {
-  runtime.getFeatureConfig(params.project, params.feature);
-  const perCall = computeCost(params.model, params.estimatedInputTokens, params.estimatedOutputTokens);
-  return perCall * params.numCalls;
+export function delegateTaskAllowance(
+  runtime: SpecSpendRuntime,
+  params: { parentCredential: string; agentId: string; allowance: number; ttlMs?: number }
+) {
+  return runtime.authorizations.delegate(params.parentCredential, params.agentId, params.allowance, params.ttlMs);
 }
 
-export interface RequestMoreBudgetResult {
-  approved: boolean;
-  status: 'approved' | 'pending_approval';
+export function settleTask(runtime: SpecSpendRuntime, authorizationId: string) {
+  return runtime.authorizations.settleTask(authorizationId);
 }
 
-const AUTO_APPROVE_CEILING = 1.0;
-
-export function requestMoreBudget(
-  runtime: SpendSpecRuntime,
-  project: string,
-  feature: string,
-  amount: number,
-  reason: string
-): RequestMoreBudgetResult {
-  if (amount <= AUTO_APPROVE_CEILING) {
-    runtime.leaseManager.grantAdditionalBudget(project, feature, amount);
-    console.log(`[approval] auto-approved $${amount.toFixed(2)} for ${project}/${feature}: ${reason}`);
-    return { approved: true, status: 'approved' };
-  }
-  console.log(`[approval] PENDING $${amount.toFixed(2)} for ${project}/${feature}: ${reason}`);
-  return { approved: false, status: 'pending_approval' };
-}
-
-export interface RecordUsageParams {
-  leaseId: string;
-  team: string;
-  task: string;
-  actualCost: number;
-  model: string;
-  costCenter: string;
-}
-
-export function recordUsage(runtime: SpendSpecRuntime, params: RecordUsageParams): void {
-  const lease = runtime.leaseManager.getLease(params.leaseId);
-  runtime.leaseManager.recordSpend(params.leaseId, params.actualCost);
-  runtime.store.addReceipt({
-    team: params.team,
-    project: lease.project,
-    feature: lease.feature,
-    task: params.task,
-    authorized: lease.reservedAmount,
-    actual: params.actualCost,
-    model: params.model,
-    costCenter: params.costCenter,
-    timestamp: new Date().toISOString(),
-  });
-  runtime.leaseManager.release(params.leaseId);
+export function revokeTask(runtime: SpecSpendRuntime, authorizationId: string): void {
+  runtime.authorizations.revokeTask(authorizationId);
 }

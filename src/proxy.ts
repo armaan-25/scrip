@@ -1,114 +1,79 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { SpendSpecRuntime } from './runtime.js';
 import { computeCost } from './pricing.js';
-import { SpendLimitExceededError } from './lease.js';
-import { requestMoreBudget } from './handlers.js';
+import type { SpecSpendRuntime } from './runtime.js';
 
-export interface RunOptions {
-  project: string;
-  feature: string;
-  task: string;
-  team: string;
-  costCenter: string;
+export interface InferenceOptions {
+  credential: string;
+  model?: string;
   estimatedInputTokens: number;
-  estimatedOutputTokens: number;
   maxTokens: number;
   messages: Anthropic.MessageParam[];
 }
 
-export interface RunResult {
+export interface InferenceResult {
   model: string;
   actualCost: number;
-  degraded: boolean;
   message: Anthropic.Message;
 }
 
 type AnthropicLike = Pick<Anthropic, 'messages'>;
 
-export class SpendSpecClient {
-  constructor(private runtime: SpendSpecRuntime, private anthropic: AnthropicLike) {}
+/** Provider proxy: every request is preauthorized against the task credential before network I/O. */
+export class SpecSpendClient {
+  constructor(private runtime: SpecSpendRuntime, private anthropic: AnthropicLike) {}
 
-  async run(options: RunOptions): Promise<RunResult> {
-    const { featureConfig } = this.runtime.getFeatureConfig(options.project, options.feature);
-    const mostExpensive = [...featureConfig.allowedModels].sort(
-      (a, b) => computeCost(b, 1, 1) - computeCost(a, 1, 1)
-    )[0];
-    const estimate = computeCost(mostExpensive, options.estimatedInputTokens, options.estimatedOutputTokens);
-    const remaining = this.runtime.leaseManager.getRemainingBudget(options.project, options.feature);
-
-    let model = this.runtime.router.route({
-      remainingBudget: remaining,
-      taskEstimate: estimate,
-      allowedModels: featureConfig.allowedModels,
-      fallbackModel: featureConfig.fallbackModel,
-    });
-
-    const reservedAmount = Math.min(
-      featureConfig.maxPerRequest,
-      computeCost(model, options.estimatedInputTokens, options.estimatedOutputTokens) * 1.2
+  async run(options: InferenceOptions): Promise<InferenceResult> {
+    const authorization = this.runtime.authorizations.getAuthorizationForCredential(options.credential);
+    const budget = this.runtime.getBudget(authorization.budgetName);
+    const remaining = authorization.allowance - authorization.spent - authorization.pending;
+    // A caller estimate alone is not a security boundary. UTF-8 bytes are a
+    // deliberately conservative local ceiling for message tokens, with room
+    // for provider-added message framing.
+    const inputTokenCeiling = Math.max(
+      options.estimatedInputTokens,
+      Buffer.byteLength(JSON.stringify(options.messages), 'utf8') + 256
     );
+    const fallbackEstimate = computeCost(
+      budget.fallbackModel,
+      inputTokenCeiling,
+      options.maxTokens
+    );
+    const model =
+      options.model ??
+      this.runtime.router.route({
+        remainingBudget: remaining,
+        taskEstimate: fallbackEstimate,
+        allowedModels: budget.allowedModels,
+        fallbackModel: budget.fallbackModel,
+      });
 
-    const lease = this.runtime.leaseManager.reserve(options.project, options.feature, reservedAmount);
+    // max_tokens gives us a deterministic output ceiling. Reserving the full
+    // possible cost prevents concurrent agents from oversubscribing the task.
+    const maximumCost = computeCost(model, inputTokenCeiling, options.maxTokens);
+    const reservation = this.runtime.authorizations.reserveRequest(options.credential, model, maximumCost);
 
-    let degraded = false;
-    let message = await this.callModel(model, options);
-    let actualCost = computeCost(model, message.usage.input_tokens, message.usage.output_tokens);
-
-    if (actualCost > lease.reservedAmount) {
-      if (featureConfig.onLimit === 'degrade' && model !== featureConfig.fallbackModel) {
-        model = featureConfig.fallbackModel;
-        degraded = true;
-        message = await this.callModel(model, options);
-        actualCost = computeCost(model, message.usage.input_tokens, message.usage.output_tokens);
-
-        if (actualCost > lease.reservedAmount) {
-          throw new SpendLimitExceededError(
-            `Task "${options.task}" exceeded its $${lease.reservedAmount.toFixed(4)} lease even after degrading to fallback model (actual cost $${actualCost.toFixed(4)})`
-          );
-        }
-      } else if (featureConfig.onLimit === 'request-approval') {
-        const shortfall = actualCost - lease.reservedAmount;
-        const result = requestMoreBudget(
-          this.runtime,
-          options.project,
-          options.feature,
-          shortfall,
-          `Overrun on task "${options.task}"`
-        );
-        if (!result.approved) {
-          throw new SpendLimitExceededError(
-            `Task "${options.task}" exceeded its $${lease.reservedAmount.toFixed(4)} lease and approval is pending`
-          );
-        }
-      } else {
-        throw new SpendLimitExceededError(
-          `Task "${options.task}" exceeded its $${lease.reservedAmount.toFixed(4)} lease`
-        );
+    try {
+      const message = (await this.anthropic.messages.create({
+        model,
+        max_tokens: options.maxTokens,
+        messages: options.messages,
+      })) as Anthropic.Message;
+      const actualCost = computeCost(model, message.usage.input_tokens, message.usage.output_tokens);
+      this.runtime.authorizations.commitRequest(
+        reservation.reservationId,
+        message.usage.input_tokens,
+        message.usage.output_tokens,
+        actualCost
+      );
+      return { model, actualCost, message };
+    } catch (error) {
+      try {
+        this.runtime.authorizations.cancelRequest(reservation.reservationId);
+      } catch {
+        // commitRequest already consumes the reservation when provider usage
+        // violates the preauthorized ceiling.
       }
+      throw error;
     }
-
-    this.runtime.leaseManager.recordSpend(lease.leaseId, actualCost);
-    this.runtime.store.addReceipt({
-      team: options.team,
-      project: options.project,
-      feature: options.feature,
-      task: options.task,
-      authorized: lease.reservedAmount,
-      actual: actualCost,
-      model,
-      costCenter: options.costCenter,
-      timestamp: new Date().toISOString(),
-    });
-    this.runtime.leaseManager.release(lease.leaseId);
-
-    return { model, actualCost, degraded, message };
-  }
-
-  private async callModel(model: string, options: RunOptions): Promise<Anthropic.Message> {
-    return this.anthropic.messages.create({
-      model,
-      max_tokens: options.maxTokens,
-      messages: options.messages,
-    }) as Promise<Anthropic.Message>;
   }
 }
