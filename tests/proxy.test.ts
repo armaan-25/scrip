@@ -3,18 +3,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpendLimitExceededError } from '../src/lease.js';
-import { SpecSpendClient } from '../src/proxy.js';
-import { SpecSpendRuntime } from '../src/runtime.js';
+import { ScripClient } from '../src/proxy.js';
+import { ScripRuntime } from '../src/runtime.js';
 import { MockRampGateway } from '../src/store.js';
 
 let tmpDir: string;
-let runtime: SpecSpendRuntime;
+let runtime: ScripRuntime;
 let ramp: MockRampGateway;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specspend-proxy-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-proxy-'));
   ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  runtime = new SpecSpendRuntime('specspend.yaml', path.join(tmpDir, 'unused.json'), ramp);
+  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -41,11 +41,11 @@ const request = {
   messages: [{ role: 'user' as const, content: 'Review this code' }],
 };
 
-describe('SpecSpendClient', () => {
+describe('ScripClient', () => {
   it('preauthorizes a provider call, commits actual usage, then settles one task receipt', async () => {
     const root = issue();
     const anthropic = fakeAnthropic();
-    const client = new SpecSpendClient(runtime, anthropic);
+    const client = new ScripClient(runtime, anthropic);
     const result = await client.run({ ...request, credential: root.credential });
 
     expect(anthropic.messages.create).toHaveBeenCalledOnce();
@@ -59,7 +59,7 @@ describe('SpecSpendClient', () => {
   it('blocks an unaffordable call before provider network I/O', async () => {
     const root = issue(0.001);
     const anthropic = fakeAnthropic();
-    const client = new SpecSpendClient(runtime, anthropic);
+    const client = new ScripClient(runtime, anthropic);
     await expect(
       client.run({ ...request, credential: root.credential, model: 'claude-sonnet-5', maxTokens: 1_000 })
     ).rejects.toThrow(SpendLimitExceededError);
@@ -71,7 +71,7 @@ describe('SpecSpendClient', () => {
     const anthropic = {
       messages: { create: vi.fn(async () => Promise.reject(new Error('provider unavailable'))) },
     } as any;
-    const client = new SpecSpendClient(runtime, anthropic);
+    const client = new ScripClient(runtime, anthropic);
     await expect(client.run({ ...request, credential: root.credential })).rejects.toThrow('provider unavailable');
     expect(runtime.authorizations.getAuthorization(root.authorization.authorizationId).pending).toBeCloseTo(0);
   });
@@ -80,7 +80,7 @@ describe('SpecSpendClient', () => {
     const root = issue(1);
     const child = runtime.authorizations.delegate(root.credential, 'child-1', 0.001);
     const anthropic = fakeAnthropic();
-    const client = new SpecSpendClient(runtime, anthropic);
+    const client = new ScripClient(runtime, anthropic);
     await expect(
       client.run({ ...request, credential: child.credential, model: 'claude-sonnet-5', maxTokens: 1_000 })
     ).rejects.toThrow(SpendLimitExceededError);

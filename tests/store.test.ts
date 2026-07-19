@@ -8,7 +8,7 @@ let tmpDir: string;
 let filePath: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specspend-ramp-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-ramp-'));
   filePath = path.join(tmpDir, 'ramp.json');
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));

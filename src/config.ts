@@ -14,7 +14,7 @@ export interface RampBudgetConfig {
   costCenter: string;
 }
 
-export interface SpecSpendConfig {
+export interface ScripConfig {
   team: string;
   rampEntityId: string;
   budgets: Record<string, RampBudgetConfig>;
@@ -37,7 +37,7 @@ interface RawConfig {
   budgets: Record<string, RawBudget>;
 }
 
-export function loadConfig(filePath: string): SpecSpendConfig {
+export function loadConfig(filePath: string): ScripConfig {
   const raw = yaml.load(fs.readFileSync(filePath, 'utf-8')) as RawConfig;
   if (!raw?.team || !raw.ramp_entity_id || !raw.budgets) {
     throw new Error('Config must define team, ramp_entity_id, and budgets');

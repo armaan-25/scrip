@@ -4,14 +4,14 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authorizeTask, delegateTaskAllowance, getBudgetPolicy, revokeTask, settleTask } from '../src/handlers.js';
 import { InvalidCredentialError } from '../src/lease.js';
-import { SpecSpendRuntime } from '../src/runtime.js';
+import { ScripRuntime } from '../src/runtime.js';
 
 let tmpDir: string;
-let runtime: SpecSpendRuntime;
+let runtime: ScripRuntime;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specspend-handlers-'));
-  runtime = new SpecSpendRuntime('specspend.yaml', path.join(tmpDir, 'ramp.json'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-handlers-'));
+  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ramp.json'));
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 

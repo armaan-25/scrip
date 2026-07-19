@@ -3,7 +3,7 @@ import { loadConfig } from '../src/config.js';
 
 describe('loadConfig', () => {
   it('loads Ramp budgets and task credential policy', () => {
-    const config = loadConfig('specspend.yaml');
+    const config = loadConfig('scrip.yaml');
     expect(config.team).toBe('agent-platform');
     expect(config.rampEntityId).toBe('ramp-entity-demo');
     expect(config.budgets.research).toEqual({

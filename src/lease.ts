@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { RampBudgetConfig, SpecSpendConfig } from './config.js';
+import type { RampBudgetConfig, ScripConfig } from './config.js';
 import type { ModelUsage, RampGateway, TaskReceipt } from './store.js';
 
 export type AuthorizationStatus = 'active' | 'settled' | 'revoked';
@@ -69,7 +69,7 @@ function hashCredential(credential: string): Buffer {
 }
 
 function issueCredential(): string {
-  return `ss_task_${randomBytes(24).toString('base64url')}`;
+  return `scrip_${randomBytes(24).toString('base64url')}`;
 }
 
 export class TaskAuthorizationManager {
@@ -78,7 +78,7 @@ export class TaskAuthorizationManager {
   private reservations = new Map<string, RequestReservation>();
   private usage = new Map<string, UsageEvent[]>();
 
-  constructor(private config: SpecSpendConfig, private ramp: RampGateway) {}
+  constructor(private config: ScripConfig, private ramp: RampGateway) {}
 
   private budget(name: string): RampBudgetConfig {
     const budget = this.config.budgets[name];

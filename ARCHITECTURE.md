@@ -1,4 +1,4 @@
-# SpecSpend Architecture
+# Scrip Architecture
 
 ## Runtime boundaries
 
@@ -17,7 +17,7 @@ process.
 
 ### Provider enforcement
 
-`src/proxy.ts` owns `SpecSpendClient`. It selects an allowed model, derives a
+`src/proxy.ts` owns `ScripClient`. It selects an allowed model, derives a
 conservative input-token ceiling from the message bytes, reserves the maximum
 possible request cost, calls Anthropic, and commits real token usage.
 Provider keys live in this process and never flow to agents.
@@ -35,7 +35,7 @@ Caller selects budget + task allowance
 → TaskAuthorizationManager validates Ramp policy and reserves allowance
 → root agent receives a temporary credential
 → root delegates smaller credentials to child agents
-→ SpecSpendClient computes the provider request ceiling
+→ ScripClient computes the provider request ceiling
 → TaskAuthorizationManager reserves it against lease + task
 → Anthropic request executes
 → actual tokens replace the pending reservation

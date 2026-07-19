@@ -15,9 +15,9 @@ let ramp: MockRampGateway;
 let manager: TaskAuthorizationManager;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'specspend-lease-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-lease-'));
   ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  manager = new TaskAuthorizationManager(loadConfig('specspend.yaml'), ramp);
+  manager = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp);
 });
 
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
@@ -29,7 +29,7 @@ function authorize(allowance = 2, ttlMs?: number) {
 describe('TaskAuthorizationManager', () => {
   it('mints an opaque task credential and reserves Ramp budget', () => {
     const issued = authorize();
-    expect(issued.credential).toMatch(/^ss_task_/);
+    expect(issued.credential).toMatch(/^scrip_/);
     expect(JSON.stringify(issued.authorization)).not.toContain(issued.credential);
     expect(manager.getBudgetRemaining('research')).toBe(98);
   });

@@ -1,11 +1,11 @@
-# SpecSpend
+# Scrip
 
 > Virtual cards for AI compute.
 
-Ramp defines the budget. SpecSpend turns it into an enforceable allowance for
+Ramp defines the budget. Scrip turns it into an enforceable allowance for
 one AI task and its subagents.
 
-SpecSpend is the runtime layer between Ramp policy and AI providers. A task gets
+Scrip is the runtime layer between Ramp policy and AI providers. A task gets
 one temporary bearer credential. That credential can mint smaller child-agent
 leases, but neither a child nor the whole task can exceed its allowance.
 Provider calls are preauthorized at their maximum token cost before network I/O,
@@ -14,7 +14,7 @@ then settled against actual usage.
 ```text
 Ramp team/project budget
         ↓
-SpecSpend task authorization
+Scrip task authorization
         ↓
 temporary inference lease
         ↓
@@ -31,14 +31,14 @@ usage reported back to Ramp
 
 ## What the credential is
 
-The `ss_task_…` value is an inference credential, not a card PAN and not a
+The `scrip_…` value is an inference credential, not a card PAN and not a
 provider API key. It is short-lived, policy-bound, stored only as a SHA-256 hash,
-and accepted only by the SpecSpend provider proxy. The proxy keeps the actual
+and accepted only by the Scrip provider proxy. The proxy keeps the actual
 Anthropic/OpenAI credentials server-side.
 
 Ramp's own virtual-card and fund APIs remain the source of truth for payment
 policy. Production server-side card access uses Ramp's Vault API and requires
-the relevant scopes plus PCI qualification. SpecSpend does not log or persist
+the relevant scopes plus PCI qualification. Scrip does not log or persist
 PAN/CVV data. See [Ramp Spend Controls](https://docs.ramp.com/developer-api/v1/spend-controls)
 and [Ramp Virtual Cards](https://docs.ramp.com/developer-api/v1/virtual-cards).
 
@@ -53,13 +53,13 @@ export ANTHROPIC_API_KEY=sk-...
 npm run demo
 ```
 
-The demo uses `specspend.yaml` and writes settled task receipts to
-`.specspend/ramp.json` through `MockRampGateway`.
+The demo uses `scrip.yaml` and writes settled task receipts to
+`.scrip/ramp.json` through `MockRampGateway`.
 
 ## Runtime API
 
 ```ts
-const runtime = new SpecSpendRuntime('specspend.yaml', '.specspend/ramp.json');
+const runtime = new ScripRuntime('scrip.yaml', '.scrip/ramp.json');
 
 const task = runtime.authorizations.authorizeTask({
   budget: 'research',

@@ -1,6 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { computeCost } from './pricing.js';
-import type { SpecSpendRuntime } from './runtime.js';
+import type { ScripRuntime } from './runtime.js';
 
 export interface InferenceOptions {
   credential: string;
@@ -19,8 +19,8 @@ export interface InferenceResult {
 type AnthropicLike = Pick<Anthropic, 'messages'>;
 
 /** Provider proxy: every request is preauthorized against the task credential before network I/O. */
-export class SpecSpendClient {
-  constructor(private runtime: SpecSpendRuntime, private anthropic: AnthropicLike) {}
+export class ScripClient {
+  constructor(private runtime: ScripRuntime, private anthropic: AnthropicLike) {}
 
   async run(options: InferenceOptions): Promise<InferenceResult> {
     const authorization = this.runtime.authorizations.getAuthorizationForCredential(options.credential);

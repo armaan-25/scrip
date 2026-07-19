@@ -1,11 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { authorizeTask, delegateTaskAllowance, settleTask } from '../src/handlers.js';
-import { SpecSpendClient } from '../src/proxy.js';
-import { SpecSpendRuntime } from '../src/runtime.js';
+import { ScripClient } from '../src/proxy.js';
+import { ScripRuntime } from '../src/runtime.js';
 
 async function main() {
-  const runtime = new SpecSpendRuntime('specspend.yaml', '.specspend/ramp.json');
-  const client = new SpecSpendClient(runtime, new Anthropic());
+  const runtime = new ScripRuntime('scrip.yaml', '.scrip/ramp.json');
+  const client = new ScripClient(runtime, new Anthropic());
   const task = authorizeTask(runtime, {
     budget: 'research',
     taskId: `research-${Date.now()}`,

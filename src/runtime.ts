@@ -1,10 +1,10 @@
-import { loadConfig, type RampBudgetConfig, type SpecSpendConfig } from './config.js';
+import { loadConfig, type RampBudgetConfig, type ScripConfig } from './config.js';
 import { TaskAuthorizationManager } from './lease.js';
 import { BudgetRouter } from './router.js';
 import { MockRampGateway, type RampGateway } from './store.js';
 
-export class SpecSpendRuntime {
-  readonly config: SpecSpendConfig;
+export class ScripRuntime {
+  readonly config: ScripConfig;
   readonly ramp: RampGateway;
   readonly authorizations: TaskAuthorizationManager;
   readonly router = new BudgetRouter();

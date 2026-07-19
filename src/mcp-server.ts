@@ -2,11 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { authorizeTask, delegateTaskAllowance, getBudgetPolicy, settleTask } from './handlers.js';
-import type { SpecSpendRuntime } from './runtime.js';
+import type { ScripRuntime } from './runtime.js';
 
 /** Optional agent adapter. The runtime credential API remains the product boundary. */
-export function createMcpServer(runtime: SpecSpendRuntime): McpServer {
-  const server = new McpServer({ name: 'specspend', version: '0.2.0' });
+export function createMcpServer(runtime: ScripRuntime): McpServer {
+  const server = new McpServer({ name: 'scrip', version: '0.2.0' });
 
   server.tool(
     'get_ramp_budget_policy',
@@ -47,7 +47,7 @@ export function createMcpServer(runtime: SpecSpendRuntime): McpServer {
   return server;
 }
 
-export async function startMcpServer(runtime: SpecSpendRuntime): Promise<void> {
+export async function startMcpServer(runtime: ScripRuntime): Promise<void> {
   const server = createMcpServer(runtime);
   await server.connect(new StdioServerTransport());
 }
