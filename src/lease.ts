@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
-import type { ModelUsage, RampGateway, TaskReceipt } from './store.js';
+import type { ModelUsage, RampGateway, TaskOutcomeStatus, TaskReceipt } from './store.js';
 
 export type AuthorizationStatus = 'active' | 'settled' | 'revoked';
 export type LeaseStatus = 'active' | 'settled' | 'revoked';
@@ -242,7 +242,10 @@ export class TaskAuthorizationManager {
     this.reservations.delete(reservationId);
   }
 
-  settleTask(authorizationId: string): TaskReceipt {
+  settleTask(
+    authorizationId: string,
+    outcome?: { status: TaskOutcomeStatus; evidence?: string }
+  ): TaskReceipt {
     const authorization = this.getActiveAuthorization(authorizationId);
     if (authorization.pending > 0) throw new Error('Cannot settle a task with requests in flight');
     authorization.status = 'settled';
@@ -282,6 +285,8 @@ export class TaskAuthorizationManager {
       costCenter: budget.costCenter,
       startedAt: authorization.createdAt,
       settledAt: new Date().toISOString(),
+      outcome: outcome?.status ?? 'unknown',
+      outcomeEvidence: outcome?.evidence,
     };
     this.ramp.reportTaskUsage(receipt);
     return receipt;

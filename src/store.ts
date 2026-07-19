@@ -9,6 +9,8 @@ export interface ModelUsage {
   cost: number;
 }
 
+export type TaskOutcomeStatus = 'success' | 'failure' | 'unknown';
+
 export interface TaskReceipt {
   receiptId: string;
   authorizationId: string;
@@ -26,6 +28,8 @@ export interface TaskReceipt {
   costCenter: string;
   startedAt: string;
   settledAt: string;
+  outcome: TaskOutcomeStatus;
+  outcomeEvidence?: string;
 }
 
 interface StoreData {

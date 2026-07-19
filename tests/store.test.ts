@@ -31,6 +31,7 @@ function receipt(overrides: Partial<TaskReceipt> = {}): TaskReceipt {
     costCenter: 'AI compute',
     startedAt: new Date().toISOString(),
     settledAt: new Date().toISOString(),
+    outcome: 'unknown',
     ...overrides,
   };
 }

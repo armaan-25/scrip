@@ -90,4 +90,21 @@ describe('TaskAuthorizationManager', () => {
     expect(manager.getBudgetRemaining('research')).toBeCloseTo(99.7);
     expect(() => manager.getLeaseForCredential(root.credential)).toThrow(InvalidCredentialError);
   });
+
+  it('defaults settlement outcome to unknown when the caller reports none', () => {
+    const root = authorize(1);
+    const receipt = manager.settleTask(root.authorization.authorizationId);
+    expect(receipt.outcome).toBe('unknown');
+    expect(receipt.outcomeEvidence).toBeUndefined();
+  });
+
+  it('records a reported outcome and evidence on the receipt', () => {
+    const root = authorize(1);
+    const receipt = manager.settleTask(root.authorization.authorizationId, {
+      status: 'success',
+      evidence: 'Tests pass and PR was merged',
+    });
+    expect(receipt.outcome).toBe('success');
+    expect(receipt.outcomeEvidence).toBe('Tests pass and PR was merged');
+  });
 });

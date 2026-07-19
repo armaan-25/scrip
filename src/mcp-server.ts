@@ -38,9 +38,24 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
   server.tool(
     'settle_ai_task',
     'Close a task authorization, emit its receipt, and report usage to Ramp.',
-    { authorizationId: z.string() },
-    async ({ authorizationId }) => ({
-      content: [{ type: 'text', text: JSON.stringify(settleTask(runtime, authorizationId)) }],
+    {
+      authorizationId: z.string(),
+      outcomeStatus: z.enum(['success', 'failure', 'unknown']).optional(),
+      outcomeEvidence: z.string().optional(),
+    },
+    async ({ authorizationId, outcomeStatus, outcomeEvidence }) => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            settleTask(
+              runtime,
+              authorizationId,
+              outcomeStatus ? { status: outcomeStatus, evidence: outcomeEvidence } : undefined
+            )
+          ),
+        },
+      ],
     })
   );
 

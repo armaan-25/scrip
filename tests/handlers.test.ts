@@ -42,7 +42,23 @@ describe('task credential handlers', () => {
       authorized: 2,
       actual: 0,
       childAgents: 1,
+      outcome: 'unknown',
     });
+  });
+
+  it('records a reported outcome when settling', () => {
+    const root = authorizeTask(runtime, {
+      budget: 'research',
+      taskId: 'task-1',
+      task: 'Review code',
+      allowance: 1,
+    });
+    const receipt = settleTask(runtime, root.authorization.authorizationId, {
+      status: 'failure',
+      evidence: 'Tests still failing after the allowance ran out',
+    });
+    expect(receipt.outcome).toBe('failure');
+    expect(receipt.outcomeEvidence).toBe('Tests still failing after the allowance ran out');
   });
 
   it('revokes every credential in the task tree', () => {

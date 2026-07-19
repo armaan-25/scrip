@@ -1,3 +1,4 @@
+import type { TaskOutcomeStatus } from './store.js';
 import type { ScripRuntime } from './runtime.js';
 
 export function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
@@ -29,8 +30,12 @@ export function delegateTaskAllowance(
   return runtime.authorizations.delegate(params.parentCredential, params.agentId, params.allowance, params.ttlMs);
 }
 
-export function settleTask(runtime: ScripRuntime, authorizationId: string) {
-  return runtime.authorizations.settleTask(authorizationId);
+export function settleTask(
+  runtime: ScripRuntime,
+  authorizationId: string,
+  outcome?: { status: TaskOutcomeStatus; evidence?: string }
+) {
+  return runtime.authorizations.settleTask(authorizationId, outcome);
 }
 
 export function revokeTask(runtime: ScripRuntime, authorizationId: string): void {
