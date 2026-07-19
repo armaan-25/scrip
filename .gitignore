@@ -1,4 +1,5 @@
 node_modules/
 dist/
-.spendspec/
+.scrip/
 .env
+scripts/demo-scenario-output.json
