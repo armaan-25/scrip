@@ -1,20 +1,22 @@
 # Scrip
 
-> Virtual cards for AI compute.
+> Ramp gives you the policy and the pipe. Scrip is the gate in between.
 
-Ramp defines the budget. Scrip turns it into an enforceable allowance for
-one AI task and its subagents.
-
-Scrip is the runtime layer between Ramp policy and AI providers. A task gets
-one temporary bearer credential. That credential can mint smaller child-agent
-leases, but neither a child nor the whole task can exceed its allowance.
-Provider calls are preauthorized at their maximum token cost before network I/O,
-then settled against actual usage.
+Ramp ships two pieces that don't talk to each other: **Funds** define spend
+policy, and **AI Usage Tracking** (`ai-usage/unified`) ingests metered usage
+after the fact — Ramp's own docs describe that ingestion as *"purely usage
+attribution and cost tracking,"* asynchronous, with no mechanism to ask
+permission before spending. Nothing in Ramp's stack gates an AI task's spend
+*before* it happens. Scrip is that gate: it authorizes a scoped, temporary
+credential per task against a real Ramp Fund, reserves and commits every
+provider call's cost before the request goes out — so a task's own subagents
+can't oversubscribe it even running concurrently — then settles real,
+already-authorized usage back through AI Usage Tracking.
 
 ```text
-Ramp team/project budget
+Ramp Fund (policy)
         ↓
-Scrip task authorization
+Scrip task authorization   ← the gate Ramp doesn't have
         ↓
 temporary inference lease
         ↓
@@ -26,21 +28,19 @@ real-time enforcement
         ↓
 settlement and receipt
         ↓
-usage reported back to Ramp
+Ramp AI Usage Tracking (telemetry)
 ```
 
 ## What the credential is
 
-The `scrip_…` value is an inference credential, not a card PAN and not a
-provider API key. It is short-lived, policy-bound, stored only as a SHA-256 hash,
-and accepted only by the Scrip provider proxy. The proxy keeps the actual
-Anthropic/OpenAI credentials server-side.
-
-Ramp's own virtual-card and fund APIs remain the source of truth for payment
-policy. Production server-side card access uses Ramp's Vault API and requires
-the relevant scopes plus PCI qualification. Scrip does not log or persist
-PAN/CVV data. See [Ramp Spend Controls](https://docs.ramp.com/developer-api/v1/spend-controls)
-and [Ramp Virtual Cards](https://docs.ramp.com/developer-api/v1/virtual-cards).
+The `scrip_…` value is an inference credential, scoped to one task's
+enforcement lifecycle — not a card PAN, not a provider API key, and not
+modeled after Ramp's Agent Cards (which mint single-use, single-merchant
+instruments unsuited to metered, per-token billing). It is short-lived,
+policy-bound, stored only as a SHA-256 hash, and accepted only by the Scrip
+provider proxy. The proxy keeps the actual Anthropic/OpenAI credentials
+server-side, and the credential settles into Ramp's AI Usage Tracking on
+task completion rather than a card transaction.
 
 ## Run it
 
@@ -93,7 +93,12 @@ engine and Ramp gateway are.
 ## Current integration boundary
 
 The prototype implements the full credential and settlement lifecycle with a
-local `MockRampGateway`. Replace that interface with a production Ramp adapter
-to read fund/budget policy and send the final receipt or accounting metadata.
-Real Ramp OAuth, webhooks, Vault access, and provider-key brokering are not
-claimed as complete.
+local `MockRampGateway`. Replace that interface with a production adapter
+that reads real Fund balances (OAuth client-credentials against Ramp's Funds
+API) and broadcasts settled receipts to `ai-usage/unified` (AI Usage
+Tracking) — designed in
+[`docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md`](docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md)
+and
+[`docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md`](docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md),
+not yet implemented. Real Ramp OAuth, webhooks, and provider-key brokering
+are not claimed as complete.

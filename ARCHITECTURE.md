@@ -2,11 +2,24 @@
 
 ## Runtime boundaries
 
+### Why this exists between two things Ramp already ships
+
+Ramp's Funds API defines spend policy; Ramp's AI Usage Tracking
+(`ai-usage/unified`) ingests metered usage after it happens. Neither gates a
+call before it's made — Ramp's own docs describe AI Usage Tracking as
+visibility-only, asynchronous ingestion. `TaskAuthorizationManager` is the
+piece that sits between them: it reads policy, authorizes and enforces
+spend before any provider call, then settles into the telemetry pipe.
+
 ### Ramp policy and reporting
 
-`src/store.ts` defines `RampGateway`. `MockRampGateway` is the local adapter: it
-reads settled usage and persists final task receipts. A production adapter can
-replace it without changing enforcement.
+`src/store.ts` defines `RampGateway`: `getReportedSpend()` reads policy,
+`reportTaskUsage()` reports settled usage. `MockRampGateway` is the local
+adapter: it reads settled usage and persists final task receipts. A
+production adapter (`RampApiGateway`, reading real Funds via OAuth
+client-credentials and broadcasting to `ai-usage/unified`) can replace it
+without changing enforcement — see
+[`docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md`](docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md).
 
 ### Authorization domain
 
@@ -40,7 +53,7 @@ Caller selects budget + task allowance
 → Anthropic request executes
 → actual tokens replace the pending reservation
 → settleTask closes every lease and aggregates one receipt
-→ RampGateway reports task usage back to the Ramp boundary
+→ RampGateway reports task usage to Ramp's AI Usage Tracking
 ```
 
 ## Failure propagation
