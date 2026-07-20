@@ -1,5 +1,18 @@
 # Production RampGateway Adapter Implementation Plan
 
+> **Needs a refresh pass before execution** — written before three
+> corrections landed (see
+> [`docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md`](../specs/2026-07-17-ramp-api-gateway-design.md)'s
+> amendments): SpecSpend → Scrip renaming throughout; `ramp_limit_id` →
+> `ramp_fund_id` (Ramp's real resource is Funds, not "Limits"); the OAuth
+> token request should default to HTTP Basic Auth, not the body-based
+> grant this plan's `RampOAuthClient` task describes. It also predates the
+> `Meter`/`ai-usage/unified` write-path design
+> ([`2026-07-18-ai-usage-tracking-positioning.md`](../specs/2026-07-18-ai-usage-tracking-positioning.md))
+> — `reportTaskUsage()` can be a real write, not permanently local-only.
+> Not yet executed as of this note; re-verify each task against current
+> `src/` before running it.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a real, OAuth-backed `RampApiGateway` that reads live Ramp spend-limit balances, wire it into the (currently synchronous) `RampGateway`/`TaskAuthorizationManager` chain by converting the three methods that touch it to `async`, and set up `.env`-based credential loading so real Ramp API keys can be dropped in before the demo with zero further code changes.

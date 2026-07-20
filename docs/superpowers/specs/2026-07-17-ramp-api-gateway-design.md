@@ -1,5 +1,27 @@
 # Production RampGateway Adapter Design
 
+> **Amendments since this was written** (kept here rather than silently
+> rewritten, so the design record stays honest about what was believed at
+> the time):
+>
+> - The project and all its symbols were renamed SpecSpend → Scrip
+>   (`SpecSpendClient` → `ScripClient`, `specspend.yaml` → `scrip.yaml`, etc.)
+>   — read every code/file reference below with that substitution.
+> - **"Limits" was a wrong assumption.** Ramp's real resource for spend
+>   policy is the **Funds API**. `ramp_limit_id` below should be
+>   `ramp_fund_id` when implemented.
+> - **The OAuth token request uses HTTP Basic Auth**
+>   (`Authorization: Basic base64(client_id:client_secret)`), confirmed
+>   directly from Ramp's own Authorization docs — not the body-based
+>   `grant_type=client_credentials` POST described in `RampOAuthClient`
+>   below.
+> - **The "mocked writes pending Vault approval" framing is superseded.**
+>   `ai-usage/unified` is a real, self-serve broadcast-destination API —
+>   `reportTaskUsage()` can be a real Ramp write. See
+>   [`2026-07-18-ai-usage-tracking-positioning.md`](2026-07-18-ai-usage-tracking-positioning.md)
+>   for the corrected read/write design (`RampApiGateway` for reads, a new
+>   `Meter` component for writes).
+
 ## Goal
 
 Replace the local-only `MockRampGateway` with a real Ramp-backed adapter for
