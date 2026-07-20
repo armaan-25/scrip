@@ -15,6 +15,9 @@ describe('loadConfig', () => {
       onLimit: 'deny',
       taskTtlSeconds: 900,
       costCenter: 'AI compute',
+      maxDelegationDepth: 3,
+      minRequestInputTokens: 500,
+      minRequestOutputTokens: 200,
     });
   });
 

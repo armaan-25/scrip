@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
+import { computeCost, getModelPrice } from './pricing.js';
 import type { ModelUsage, RampGateway, TaskOutcomeStatus, TaskReceipt } from './store.js';
 
 export type AuthorizationStatus = 'active' | 'settled' | 'revoked';
@@ -29,6 +30,7 @@ export interface InferenceLease {
   pending: number;
   status: LeaseStatus;
   expiresAt: string;
+  depth: number;
 }
 
 export interface IssuedTaskAuthorization {
@@ -63,6 +65,7 @@ interface InternalLease extends InferenceLease {
 
 export class SpendLimitExceededError extends Error {}
 export class InvalidCredentialError extends Error {}
+export class ApprovalRequiredError extends Error {}
 
 function hashCredential(credential: string): Buffer {
   return createHash('sha256').update(credential).digest();
@@ -70,6 +73,11 @@ function hashCredential(credential: string): Buffer {
 
 function issueCredential(): string {
   return `scrip_${randomBytes(24).toString('base64url')}`;
+}
+
+/** The lowest-outputPrice model in a budget's allowed list — the mirror image of BudgetRouter's priciest-first pick. */
+function cheapestModel(allowedModels: string[]): string {
+  return [...allowedModels].sort((a, b) => getModelPrice(a).outputPrice - getModelPrice(b).outputPrice)[0];
 }
 
 export class TaskAuthorizationManager {
@@ -141,6 +149,7 @@ export class TaskAuthorizationManager {
       pending: 0,
       status: 'active',
       expiresAt,
+      depth: 0,
       credentialHash: hashCredential(credential),
     };
     this.authorizations.set(authorization.authorizationId, authorization);
@@ -153,6 +162,27 @@ export class TaskAuthorizationManager {
     const parent = this.authenticate(parentCredential);
     const authorization = this.getActiveAuthorization(parent.authorizationId);
     this.assertNotExpired(parent, authorization);
+    const budget = this.budget(authorization.budgetName);
+
+    if (parent.depth >= budget.maxDelegationDepth) {
+      throw new SpendLimitExceededError(
+        `Cannot delegate from lease ${parent.leaseId}: at max delegation depth (${budget.maxDelegationDepth})`
+      );
+    }
+
+    const minViableAllowance = computeCost(
+      cheapestModel(budget.allowedModels),
+      budget.minRequestInputTokens,
+      budget.minRequestOutputTokens
+    );
+    if (allowance < minViableAllowance) {
+      throw new SpendLimitExceededError(
+        `Cannot delegate $${allowance.toFixed(6)}: below this budget's minimum viable allowance ` +
+          `$${minViableAllowance.toFixed(6)} (cheapest allowed model at ${budget.minRequestInputTokens}in/` +
+          `${budget.minRequestOutputTokens}out tokens)`
+      );
+    }
+
     const delegated = [...this.leases.values()]
       .filter((lease) => lease.parentLeaseId === parent.leaseId && lease.status === 'active')
       .reduce((sum, lease) => sum + lease.allowance, 0);
@@ -175,6 +205,7 @@ export class TaskAuthorizationManager {
       pending: 0,
       status: 'active',
       expiresAt: requestedExpiry < parent.expiresAt ? requestedExpiry : parent.expiresAt,
+      depth: parent.depth + 1,
       credentialHash: hashCredential(credential),
     };
     this.leases.set(lease.leaseId, lease);

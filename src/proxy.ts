@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { ApprovalRequiredError, SpendLimitExceededError, type RequestReservation } from './lease.js';
 import { computeCost } from './pricing.js';
 import type { ScripRuntime } from './runtime.js';
 
@@ -38,7 +39,7 @@ export class ScripClient {
       inputTokenCeiling,
       options.maxTokens
     );
-    const model =
+    let model =
       options.model ??
       this.runtime.router.route({
         remainingBudget: remaining,
@@ -49,8 +50,28 @@ export class ScripClient {
 
     // max_tokens gives us a deterministic output ceiling. Reserving the full
     // possible cost prevents concurrent agents from oversubscribing the task.
-    const maximumCost = computeCost(model, inputTokenCeiling, options.maxTokens);
-    const reservation = this.runtime.authorizations.reserveRequest(options.credential, model, maximumCost);
+    let maximumCost = computeCost(model, inputTokenCeiling, options.maxTokens);
+    let reservation: RequestReservation;
+    try {
+      reservation = this.runtime.authorizations.reserveRequest(options.credential, model, maximumCost);
+    } catch (error) {
+      if (!(error instanceof SpendLimitExceededError)) throw error;
+
+      if (budget.onLimit === 'degrade' && model !== budget.fallbackModel) {
+        // One degrade retry only: fall back to the configured cheaper model
+        // and try once more. If that still doesn't fit, let it throw.
+        model = budget.fallbackModel;
+        maximumCost = computeCost(model, inputTokenCeiling, options.maxTokens);
+        reservation = this.runtime.authorizations.reserveRequest(options.credential, model, maximumCost);
+      } else if (budget.onLimit === 'request-approval') {
+        // No approval-callback mechanism exists yet; this just makes the
+        // failure mode distinguishable from a flat deny for callers that
+        // want to build one.
+        throw new ApprovalRequiredError(error.message);
+      } else {
+        throw error;
+      }
+    }
 
     try {
       const message = (await this.anthropic.messages.create({

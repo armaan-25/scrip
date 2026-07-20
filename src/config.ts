@@ -12,6 +12,9 @@ export interface RampBudgetConfig {
   onLimit: LimitBehavior;
   taskTtlSeconds: number;
   costCenter: string;
+  maxDelegationDepth: number;
+  minRequestInputTokens: number;
+  minRequestOutputTokens: number;
 }
 
 export interface ScripConfig {
@@ -29,6 +32,9 @@ interface RawBudget {
   on_limit: LimitBehavior;
   task_ttl_seconds: number;
   cost_center: string;
+  max_delegation_depth: number;
+  min_request_input_tokens: number;
+  min_request_output_tokens: number;
 }
 
 interface RawConfig {
@@ -54,6 +60,9 @@ export function loadConfig(filePath: string): ScripConfig {
     if (!budget.allowed_models.includes(budget.fallback_model)) {
       throw new Error(`Budget "${name}" fallback_model must be in allowed_models`);
     }
+    if (budget.max_delegation_depth <= 0) {
+      throw new Error(`Budget "${name}" max_delegation_depth must be positive`);
+    }
     budgets[name] = {
       rampBudgetId: budget.ramp_budget_id,
       monthlyLimit: budget.monthly_limit,
@@ -63,6 +72,9 @@ export function loadConfig(filePath: string): ScripConfig {
       onLimit: budget.on_limit,
       taskTtlSeconds: budget.task_ttl_seconds,
       costCenter: budget.cost_center,
+      maxDelegationDepth: budget.max_delegation_depth,
+      minRequestInputTokens: budget.min_request_input_tokens,
+      minRequestOutputTokens: budget.min_request_output_tokens,
     };
   }
 

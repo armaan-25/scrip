@@ -107,4 +107,29 @@ describe('TaskAuthorizationManager', () => {
     expect(receipt.outcome).toBe('success');
     expect(receipt.outcomeEvidence).toBe('Tests pass and PR was merged');
   });
+
+  it('tracks delegation depth and rejects delegating past the configured ceiling', () => {
+    // research budget's max_delegation_depth is 3 in scrip.yaml
+    const root = authorize(1); // depth 0
+    const child = manager.delegate(root.credential, 'child', 0.5); // depth 1
+    expect(child.lease.depth).toBe(1);
+    const grandchild = manager.delegate(child.credential, 'grandchild', 0.1); // depth 2
+    expect(grandchild.lease.depth).toBe(2);
+    const greatGrandchild = manager.delegate(grandchild.credential, 'great-grandchild', 0.01); // depth 3
+    expect(greatGrandchild.lease.depth).toBe(3);
+
+    expect(() => manager.delegate(greatGrandchild.credential, 'too-deep', 0.001)).toThrow(
+      SpendLimitExceededError
+    );
+  });
+
+  it('rejects delegating an allowance below the minimum viable request cost', () => {
+    // research budget's cheapest allowed model is haiku; min_request_input_tokens=500,
+    // min_request_output_tokens=200 costs ~$0.0015 at haiku's rate.
+    const root = authorize(1);
+    expect(() => manager.delegate(root.credential, 'too-small', 0.0001)).toThrow(
+      SpendLimitExceededError
+    );
+    expect(() => manager.delegate(root.credential, 'just-enough', 0.002)).not.toThrow();
+  });
 });

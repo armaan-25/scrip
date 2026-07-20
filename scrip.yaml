@@ -12,6 +12,9 @@ budgets:
     on_limit: deny
     task_ttl_seconds: 900
     cost_center: AI compute
+    max_delegation_depth: 3
+    min_request_input_tokens: 500
+    min_request_output_tokens: 200
   support:
     ramp_budget_id: ramp-budget-support
     monthly_limit: 250
@@ -23,3 +26,20 @@ budgets:
     on_limit: degrade
     task_ttl_seconds: 600
     cost_center: Support automation
+    max_delegation_depth: 3
+    min_request_input_tokens: 500
+    min_request_output_tokens: 200
+  escalation:
+    ramp_budget_id: ramp-budget-escalation
+    monthly_limit: 50
+    max_task_allowance: 5
+    allowed_models:
+      - claude-sonnet-5
+      - claude-haiku-4-5-20251001
+    fallback_model: claude-haiku-4-5-20251001
+    on_limit: request-approval
+    task_ttl_seconds: 600
+    cost_center: Escalations
+    max_delegation_depth: 3
+    min_request_input_tokens: 500
+    min_request_output_tokens: 200
