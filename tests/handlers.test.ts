@@ -16,8 +16,8 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
 describe('task credential handlers', () => {
-  it('exposes Ramp policy and available task authorization', () => {
-    expect(getBudgetPolicy(runtime, 'research')).toMatchObject({
+  it('exposes Ramp policy and available task authorization', async () => {
+    expect(await getBudgetPolicy(runtime, 'research')).toMatchObject({
       rampBudgetId: 'ramp-budget-research',
       monthlyLimit: 100,
       availableToAuthorize: 100,
@@ -25,8 +25,8 @@ describe('task credential handlers', () => {
     });
   });
 
-  it('authorizes, delegates, and settles a task', () => {
-    const root = authorizeTask(runtime, {
+  it('authorizes, delegates, and settles a task', async () => {
+    const root = await authorizeTask(runtime, {
       budget: 'research',
       taskId: 'task-1',
       task: 'Review code',
@@ -38,7 +38,7 @@ describe('task credential handlers', () => {
       allowance: 0.5,
     });
     expect(child.lease.authorizationId).toBe(root.authorization.authorizationId);
-    expect(settleTask(runtime, root.authorization.authorizationId)).toMatchObject({
+    expect(await settleTask(runtime, root.authorization.authorizationId)).toMatchObject({
       authorized: 2,
       actual: 0,
       childAgents: 1,
@@ -46,14 +46,14 @@ describe('task credential handlers', () => {
     });
   });
 
-  it('records a reported outcome when settling', () => {
-    const root = authorizeTask(runtime, {
+  it('records a reported outcome when settling', async () => {
+    const root = await authorizeTask(runtime, {
       budget: 'research',
       taskId: 'task-1',
       task: 'Review code',
       allowance: 1,
     });
-    const receipt = settleTask(runtime, root.authorization.authorizationId, {
+    const receipt = await settleTask(runtime, root.authorization.authorizationId, {
       status: 'failure',
       evidence: 'Tests still failing after the allowance ran out',
     });
@@ -61,8 +61,8 @@ describe('task credential handlers', () => {
     expect(receipt.outcomeEvidence).toBe('Tests still failing after the allowance ran out');
   });
 
-  it('revokes every credential in the task tree', () => {
-    const root = authorizeTask(runtime, {
+  it('revokes every credential in the task tree', async () => {
+    const root = await authorizeTask(runtime, {
       budget: 'research',
       taskId: 'task-1',
       task: 'Review code',

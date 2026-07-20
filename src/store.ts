@@ -37,16 +37,16 @@ interface StoreData {
 }
 
 export interface RampGateway {
-  getReportedSpend(rampBudgetId: string, sinceMonth?: string): number;
-  reportTaskUsage(receipt: TaskReceipt): void;
+  getReportedSpend(rampBudgetId: string, sinceMonth?: string): Promise<number>;
+  reportTaskUsage(receipt: TaskReceipt): Promise<void>;
 }
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
-/** Local Ramp boundary used by the demo. Replace this adapter, not the lease engine. */
-export class MockRampGateway implements RampGateway {
+/** Local JSON-file receipt persistence, shared by every RampGateway implementation. */
+export class LocalReceiptStore {
   constructor(private filePath: string) {
     if (!fs.existsSync(this.filePath)) {
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
@@ -62,7 +62,7 @@ export class MockRampGateway implements RampGateway {
     fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2) + '\n');
   }
 
-  reportTaskUsage(receipt: TaskReceipt): void {
+  addReceipt(receipt: TaskReceipt): void {
     const data = this.load();
     data.receipts.push(receipt);
     this.save(data);
@@ -73,7 +73,7 @@ export class MockRampGateway implements RampGateway {
     );
   }
 
-  getReportedSpend(rampBudgetId: string, sinceMonth: string = currentMonth()): number {
+  getSpend(rampBudgetId: string, sinceMonth: string = currentMonth()): number {
     return this.load().receipts
       .filter((receipt) => receipt.rampBudgetId === rampBudgetId && receipt.settledAt.startsWith(sinceMonth))
       .reduce((sum, receipt) => sum + receipt.actual, 0);
@@ -81,5 +81,26 @@ export class MockRampGateway implements RampGateway {
 
   getReceipts(): TaskReceipt[] {
     return this.load().receipts;
+  }
+}
+
+/** Local Ramp boundary used by the demo. Replace this adapter, not the lease engine. */
+export class MockRampGateway implements RampGateway {
+  private readonly store: LocalReceiptStore;
+
+  constructor(filePath: string) {
+    this.store = new LocalReceiptStore(filePath);
+  }
+
+  async reportTaskUsage(receipt: TaskReceipt): Promise<void> {
+    this.store.addReceipt(receipt);
+  }
+
+  async getReportedSpend(rampBudgetId: string, sinceMonth?: string): Promise<number> {
+    return this.store.getSpend(rampBudgetId, sinceMonth);
+  }
+
+  getReceipts(): TaskReceipt[] {
+    return this.store.getReceipts();
   }
 }

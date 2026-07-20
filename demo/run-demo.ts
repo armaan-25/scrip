@@ -1,3 +1,8 @@
+import { existsSync } from 'node:fs';
+if (existsSync('.env')) {
+  process.loadEnvFile('.env');
+}
+
 import Anthropic from '@anthropic-ai/sdk';
 import { authorizeTask, delegateTaskAllowance, settleTask } from '../src/handlers.js';
 import { ScripClient } from '../src/proxy.js';
@@ -6,7 +11,7 @@ import { ScripRuntime } from '../src/runtime.js';
 async function main() {
   const runtime = new ScripRuntime('scrip.yaml', '.scrip/ramp.json');
   const client = new ScripClient(runtime, new Anthropic());
-  const task = authorizeTask(runtime, {
+  const task = await authorizeTask(runtime, {
     budget: 'research',
     taskId: `research-${Date.now()}`,
     task: 'Research authentication libraries in this repository',
@@ -38,7 +43,7 @@ async function main() {
     )
   );
 
-  const receipt = settleTask(runtime, task.authorization.authorizationId);
+  const receipt = await settleTask(runtime, task.authorization.authorizationId);
   console.log(JSON.stringify(receipt, null, 2));
 }
 

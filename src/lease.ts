@@ -94,29 +94,33 @@ export class TaskAuthorizationManager {
     return budget;
   }
 
-  getBudgetRemaining(name: string): number {
+  async getBudgetRemaining(name: string): Promise<number> {
     const budget = this.budget(name);
-    const reported = this.ramp.getReportedSpend(budget.rampBudgetId);
+    // Always the same label used to write receipts in settleTask() - a
+    // gateway that needs a different identifier (a real Fund ID) resolves
+    // that translation itself, since only it knows which identifier space
+    // its reads and writes actually live in.
+    const reported = await this.ramp.getReportedSpend(budget.rampBudgetId);
     const activeAllowances = [...this.authorizations.values()]
       .filter((authorization) => authorization.budgetName === name && authorization.status === 'active')
       .reduce((sum, authorization) => sum + authorization.allowance, 0);
     return budget.monthlyLimit - reported - activeAllowances;
   }
 
-  authorizeTask(params: {
+  async authorizeTask(params: {
     budget: string;
     taskId: string;
     task: string;
     allowance: number;
     ttlMs?: number;
-  }): IssuedTaskAuthorization {
+  }): Promise<IssuedTaskAuthorization> {
     const budget = this.budget(params.budget);
     if (params.allowance <= 0 || params.allowance > budget.maxTaskAllowance) {
       throw new SpendLimitExceededError(
         `Task allowance must be between $0 and $${budget.maxTaskAllowance.toFixed(4)}`
       );
     }
-    const remaining = this.getBudgetRemaining(params.budget);
+    const remaining = await this.getBudgetRemaining(params.budget);
     if (params.allowance > remaining) {
       throw new SpendLimitExceededError(
         `Cannot authorize $${params.allowance.toFixed(4)} from Ramp budget ${budget.rampBudgetId}: ` +
@@ -273,10 +277,10 @@ export class TaskAuthorizationManager {
     this.reservations.delete(reservationId);
   }
 
-  settleTask(
+  async settleTask(
     authorizationId: string,
     outcome?: { status: TaskOutcomeStatus; evidence?: string }
-  ): TaskReceipt {
+  ): Promise<TaskReceipt> {
     const authorization = this.getActiveAuthorization(authorizationId);
     if (authorization.pending > 0) throw new Error('Cannot settle a task with requests in flight');
     authorization.status = 'settled';
@@ -319,7 +323,7 @@ export class TaskAuthorizationManager {
       outcome: outcome?.status ?? 'unknown',
       outcomeEvidence: outcome?.evidence,
     };
-    this.ramp.reportTaskUsage(receipt);
+    await this.ramp.reportTaskUsage(receipt);
     return receipt;
   }
 

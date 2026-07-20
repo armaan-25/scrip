@@ -8,6 +8,7 @@ describe('loadConfig', () => {
     expect(config.rampEntityId).toBe('ramp-entity-demo');
     expect(config.budgets.research).toEqual({
       rampBudgetId: 'ramp-budget-research',
+      rampFundId: 'cd1c33eb-d742-4d7e-850f-972eb3c3c53f',
       monthlyLimit: 100,
       maxTaskAllowance: 10,
       allowedModels: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
@@ -19,6 +20,11 @@ describe('loadConfig', () => {
       minRequestInputTokens: 500,
       minRequestOutputTokens: 200,
     });
+  });
+
+  it('leaves rampFundId undefined when not configured', () => {
+    const config = loadConfig('scrip.yaml');
+    expect(config.budgets.support.rampFundId).toBeUndefined();
   });
 
   it('throws for a missing file', () => {

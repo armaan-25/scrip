@@ -1,14 +1,14 @@
 import type { TaskOutcomeStatus } from './store.js';
 import type { ScripRuntime } from './runtime.js';
 
-export function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
+export async function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
   const budget = runtime.getBudget(budgetName);
-  const reportedSpend = runtime.ramp.getReportedSpend(budget.rampBudgetId);
+  const reportedSpend = await runtime.ramp.getReportedSpend(budget.rampFundId ?? budget.rampBudgetId);
   return {
     rampBudgetId: budget.rampBudgetId,
     monthlyLimit: budget.monthlyLimit,
     reportedSpend,
-    availableToAuthorize: runtime.authorizations.getBudgetRemaining(budgetName),
+    availableToAuthorize: await runtime.authorizations.getBudgetRemaining(budgetName),
     maxTaskAllowance: budget.maxTaskAllowance,
     allowedModels: budget.allowedModels,
     fallbackModel: budget.fallbackModel,
@@ -16,7 +16,7 @@ export function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
   };
 }
 
-export function authorizeTask(
+export async function authorizeTask(
   runtime: ScripRuntime,
   params: { budget: string; taskId: string; task: string; allowance: number; ttlMs?: number }
 ) {
@@ -30,7 +30,7 @@ export function delegateTaskAllowance(
   return runtime.authorizations.delegate(params.parentCredential, params.agentId, params.allowance, params.ttlMs);
 }
 
-export function settleTask(
+export async function settleTask(
   runtime: ScripRuntime,
   authorizationId: string,
   outcome?: { status: TaskOutcomeStatus; evidence?: string }

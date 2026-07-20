@@ -13,10 +13,10 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
 describe('ScripRuntime', () => {
-  it('wires Ramp policy, task authorizations, and routing', () => {
+  it('wires Ramp policy, task authorizations, and routing', async () => {
     const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ramp.json'));
     expect(runtime.config.rampEntityId).toBe('ramp-entity-demo');
-    expect(runtime.authorizations.getBudgetRemaining('research')).toBe(100);
+    expect(await runtime.authorizations.getBudgetRemaining('research')).toBe(100);
     expect(runtime.getBudget('research').rampBudgetId).toBe('ramp-budget-research');
   });
 

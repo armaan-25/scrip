@@ -3,6 +3,7 @@ ramp_entity_id: ramp-entity-demo
 budgets:
   research:
     ramp_budget_id: ramp-budget-research
+    ramp_fund_id: cd1c33eb-d742-4d7e-850f-972eb3c3c53f
     monthly_limit: 100
     max_task_allowance: 10
     allowed_models:

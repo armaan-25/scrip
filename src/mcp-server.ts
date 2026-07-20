@@ -13,7 +13,7 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
     'Read the Ramp-backed policy available for task authorization.',
     { budget: z.string() },
     async ({ budget }) => ({
-      content: [{ type: 'text', text: JSON.stringify(getBudgetPolicy(runtime, budget)) }],
+      content: [{ type: 'text', text: JSON.stringify(await getBudgetPolicy(runtime, budget)) }],
     })
   );
 
@@ -22,7 +22,7 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
     'Mint one temporary inference credential backed by a Ramp budget.',
     { budget: z.string(), taskId: z.string(), task: z.string(), allowance: z.number().positive() },
     async (params) => ({
-      content: [{ type: 'text', text: JSON.stringify(authorizeTask(runtime, params)) }],
+      content: [{ type: 'text', text: JSON.stringify(await authorizeTask(runtime, params)) }],
     })
   );
 
@@ -48,7 +48,7 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
         {
           type: 'text',
           text: JSON.stringify(
-            settleTask(
+            await settleTask(
               runtime,
               authorizationId,
               outcomeStatus ? { status: outcomeStatus, evidence: outcomeEvidence } : undefined

@@ -1,7 +1,26 @@
 import { loadConfig, type RampBudgetConfig, type ScripConfig } from './config.js';
 import { TaskAuthorizationManager } from './lease.js';
+import { RampApiGateway } from './ramp-api-gateway.js';
 import { BudgetRouter } from './router.js';
 import { MockRampGateway, type RampGateway } from './store.js';
+
+export function createRampGateway(storePath: string, config: ScripConfig): RampGateway {
+  const clientId = process.env.RAMP_CLIENT_ID;
+  const clientSecret = process.env.RAMP_CLIENT_SECRET;
+
+  if (clientId && clientSecret) {
+    const baseUrl = process.env.RAMP_API_BASE_URL ?? 'https://demo-api.ramp.com';
+    const fundIdsByBudget: Record<string, string> = {};
+    for (const budget of Object.values(config.budgets)) {
+      if (budget.rampFundId) fundIdsByBudget[budget.rampBudgetId] = budget.rampFundId;
+    }
+    console.log(`[ramp] using RampApiGateway (${baseUrl})`);
+    return new RampApiGateway({ clientId, clientSecret, baseUrl, fundIdsByBudget }, storePath);
+  }
+
+  console.log('[ramp] RAMP_CLIENT_ID/RAMP_CLIENT_SECRET not set, using MockRampGateway');
+  return new MockRampGateway(storePath);
+}
 
 export class ScripRuntime {
   readonly config: ScripConfig;
@@ -11,7 +30,7 @@ export class ScripRuntime {
 
   constructor(configPath: string, storePath: string, ramp?: RampGateway) {
     this.config = loadConfig(configPath);
-    this.ramp = ramp ?? new MockRampGateway(storePath);
+    this.ramp = ramp ?? createRampGateway(storePath, this.config);
     this.authorizations = new TaskAuthorizationManager(this.config, this.ramp);
   }
 

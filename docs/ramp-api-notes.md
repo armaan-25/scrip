@@ -27,6 +27,12 @@ a real response.
   `expires_in` is in seconds — 864000 = 10 days, matching Ramp's docs for
   client-credentials tokens.
 - Auth header for subsequent requests: `Authorization: Bearer <access_token>`.
+- **Gotcha, confirmed the hard way:** omitting `scope` from the token
+  request body still returns a `200` with a valid-looking token, but that
+  token has no scopes and every subsequent API call with it fails with
+  `403`. The token response's `scope` field only reflects what you
+  explicitly requested — Ramp does not default to "everything this app is
+  authorized for." Always send `scope` explicitly.
 
 ## Funds endpoint
 
@@ -68,10 +74,9 @@ a real response.
   ("add transactions") against a test Fund and re-fetch to confirm the
   balance actually increases, before trusting this in a real budget
   decision.
-- No single-Fund-by-ID endpoint was tried yet (`GET /developer/v1/funds/{id}`
-  is assumed to exist and return the same per-Fund shape as one element of
-  the list response — standard REST convention, not yet independently
-  confirmed).
+- **`GET /developer/v1/funds/{id}` confirmed working live** (2026-07-20,
+  via `scripts/smoke-test-ramp-gateway.ts` against the real "Software" fund)
+  — returns the same per-Fund shape as one element of the list response.
 
 ## Real Fund IDs available in this sandbox (seeded demo data)
 

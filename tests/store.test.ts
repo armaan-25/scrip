@@ -37,18 +37,18 @@ function receipt(overrides: Partial<TaskReceipt> = {}): TaskReceipt {
 }
 
 describe('MockRampGateway', () => {
-  it('persists task receipts and reports spend by Ramp budget', () => {
+  it('persists task receipts and reports spend by Ramp budget', async () => {
     const ramp = new MockRampGateway(filePath);
-    ramp.reportTaskUsage(receipt());
-    ramp.reportTaskUsage(receipt({ receiptId: 'receipt-2', actual: 0.25 }));
-    ramp.reportTaskUsage(receipt({ receiptId: 'receipt-3', rampBudgetId: 'budget-2', actual: 9 }));
-    expect(ramp.getReportedSpend('budget-1')).toBeCloseTo(0.75);
+    await ramp.reportTaskUsage(receipt());
+    await ramp.reportTaskUsage(receipt({ receiptId: 'receipt-2', actual: 0.25 }));
+    await ramp.reportTaskUsage(receipt({ receiptId: 'receipt-3', rampBudgetId: 'budget-2', actual: 9 }));
+    expect(await ramp.getReportedSpend('budget-1')).toBeCloseTo(0.75);
     expect(ramp.getReceipts()).toHaveLength(3);
   });
 
-  it('excludes receipts outside the requested month', () => {
+  it('excludes receipts outside the requested month', async () => {
     const ramp = new MockRampGateway(filePath);
-    ramp.reportTaskUsage(receipt({ settledAt: '2020-01-15T00:00:00.000Z' }));
-    expect(ramp.getReportedSpend('budget-1', '2026-07')).toBe(0);
+    await ramp.reportTaskUsage(receipt({ settledAt: '2020-01-15T00:00:00.000Z' }));
+    expect(await ramp.getReportedSpend('budget-1', '2026-07')).toBe(0);
   });
 });

@@ -5,6 +5,7 @@ export type LimitBehavior = 'degrade' | 'request-approval' | 'deny';
 
 export interface RampBudgetConfig {
   rampBudgetId: string;
+  rampFundId?: string;
   monthlyLimit: number;
   maxTaskAllowance: number;
   allowedModels: string[];
@@ -25,6 +26,7 @@ export interface ScripConfig {
 
 interface RawBudget {
   ramp_budget_id: string;
+  ramp_fund_id?: string;
   monthly_limit: number;
   max_task_allowance: number;
   allowed_models: string[];
@@ -65,6 +67,7 @@ export function loadConfig(filePath: string): ScripConfig {
     }
     budgets[name] = {
       rampBudgetId: budget.ramp_budget_id,
+      rampFundId: budget.ramp_fund_id,
       monthlyLimit: budget.monthly_limit,
       maxTaskAllowance: budget.max_task_allowance,
       allowedModels: budget.allowed_models,

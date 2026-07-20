@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-function issue(allowance = 1) {
+async function issue(allowance = 1) {
   return runtime.authorizations.authorizeTask({
     budget: 'research',
     taskId: 'task-1',
@@ -27,7 +27,7 @@ function issue(allowance = 1) {
   });
 }
 
-function issueOnBudget(budget: string, allowance: number) {
+async function issueOnBudget(budget: string, allowance: number) {
   return runtime.authorizations.authorizeTask({
     budget,
     taskId: 'task-1',
@@ -52,21 +52,21 @@ const request = {
 
 describe('ScripClient', () => {
   it('preauthorizes a provider call, commits actual usage, then settles one task receipt', async () => {
-    const root = issue();
+    const root = await issue();
     const anthropic = fakeAnthropic();
     const client = new ScripClient(runtime, anthropic);
     const result = await client.run({ ...request, credential: root.credential });
 
     expect(anthropic.messages.create).toHaveBeenCalledOnce();
     expect(result.actualCost).toBeGreaterThan(0);
-    const receipt = runtime.authorizations.settleTask(root.authorization.authorizationId);
+    const receipt = await runtime.authorizations.settleTask(root.authorization.authorizationId);
     expect(receipt.actual).toBeCloseTo(result.actualCost);
     expect(receipt.requestCount).toBe(1);
     expect(receipt.modelUsage[0].inputTokens).toBe(500);
   });
 
   it('blocks an unaffordable call before provider network I/O', async () => {
-    const root = issue(0.001);
+    const root = await issue(0.001);
     const anthropic = fakeAnthropic();
     const client = new ScripClient(runtime, anthropic);
     await expect(
@@ -76,7 +76,7 @@ describe('ScripClient', () => {
   });
 
   it('releases the request reservation when the provider fails', async () => {
-    const root = issue(0.1);
+    const root = await issue(0.1);
     const anthropic = {
       messages: { create: vi.fn(async () => Promise.reject(new Error('provider unavailable'))) },
     } as any;
@@ -86,7 +86,7 @@ describe('ScripClient', () => {
   });
 
   it('enforces a child agent allowance independently of the parent task', async () => {
-    const root = issue(1);
+    const root = await issue(1);
     // Above the research budget's minimum-viable-allowance floor ($0.0015 at
     // haiku's rate for 500in/200out tokens) but still far short of what a
     // 1,000-max-token sonnet call costs, so the *request-level* reservation
@@ -104,7 +104,7 @@ describe('ScripClient', () => {
     // support budget: onLimit degrade, fallback claude-haiku-4-5-20251001.
     // sonnet at 500in/300out costs $0.006 (too much for $0.003); haiku at
     // the same tokens costs $0.002 (fits) -> degrade retry should succeed.
-    const root = issueOnBudget('support', 0.003);
+    const root = await issueOnBudget('support', 0.003);
     const anthropic = fakeAnthropic();
     const client = new ScripClient(runtime, anthropic);
     const result = await client.run({
@@ -122,7 +122,7 @@ describe('ScripClient', () => {
   });
 
   it('throws if the fallback model still does not fit after a degrade retry', async () => {
-    const root = issueOnBudget('support', 0.0001);
+    const root = await issueOnBudget('support', 0.0001);
     const anthropic = fakeAnthropic();
     const client = new ScripClient(runtime, anthropic);
     await expect(
@@ -132,7 +132,7 @@ describe('ScripClient', () => {
   });
 
   it('throws ApprovalRequiredError when onLimit is request-approval and the request does not fit', async () => {
-    const root = issueOnBudget('escalation', 0.0001);
+    const root = await issueOnBudget('escalation', 0.0001);
     const anthropic = fakeAnthropic();
     const client = new ScripClient(runtime, anthropic);
     await expect(
@@ -143,7 +143,7 @@ describe('ScripClient', () => {
 
   it('still throws SpendLimitExceededError unchanged when onLimit is deny', async () => {
     // research budget: onLimit deny (unchanged regression coverage).
-    const root = issue(0.0001);
+    const root = await issue(0.0001);
     const anthropic = fakeAnthropic();
     const client = new ScripClient(runtime, anthropic);
     await expect(
