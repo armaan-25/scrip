@@ -70,6 +70,7 @@ function receipt(overrides: Partial<TaskReceipt> = {}): TaskReceipt {
     childAgents: 0,
     requestCount: 1,
     modelUsage: [],
+    actionUsage: [],
     costCenter: 'AI compute',
     startedAt: new Date().toISOString(),
     settledAt: new Date().toISOString(),

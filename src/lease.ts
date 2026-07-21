@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
-import type { ModelUsage, RampGateway, TaskOutcomeStatus, TaskReceipt } from './store.js';
+import type { ActionType, ActionUsage, ModelUsage, RampGateway, TaskOutcomeStatus, TaskReceipt } from './store.js';
 
 export type AuthorizationStatus = 'active' | 'settled' | 'revoked';
 export type LeaseStatus = 'active' | 'settled' | 'revoked';
@@ -56,19 +56,24 @@ export interface TaskEvidenceSnapshot {
   requestedShortfall: number;
 }
 
-export interface RequestReservation {
+export interface ActionReservation {
   reservationId: string;
   authorizationId: string;
   leaseId: string;
-  model: string;
+  actionType: ActionType;
+  label: string;
   maximumCost: number;
 }
 
-interface UsageEvent {
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
+/** Preserved name for callers already importing RequestReservation (e.g. src/proxy.ts). */
+export type RequestReservation = ActionReservation;
+
+interface ActionEvent {
+  actionType: ActionType;
+  label: string;
   cost: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 interface InternalLease extends InferenceLease {
@@ -95,8 +100,8 @@ function cheapestModel(allowedModels: string[]): string {
 export class TaskAuthorizationManager {
   private authorizations = new Map<string, TaskAuthorization>();
   private leases = new Map<string, InternalLease>();
-  private reservations = new Map<string, RequestReservation>();
-  private usage = new Map<string, UsageEvent[]>();
+  private reservations = new Map<string, ActionReservation>();
+  private usage = new Map<string, ActionEvent[]>();
 
   constructor(private config: ScripConfig, private ramp: RampGateway) {}
 
@@ -228,27 +233,25 @@ export class TaskAuthorizationManager {
     return { lease: this.publicLease(lease), credential };
   }
 
-  reserveRequest(credential: string, model: string, maximumCost: number): RequestReservation {
+  /** The generic primitive: atomic reserve/commit/cancel over any resource type, not just inference. */
+  reserveAction(credential: string, actionType: ActionType, label: string, maximumCost: number): ActionReservation {
     const lease = this.authenticate(credential);
     const authorization = this.getActiveAuthorization(lease.authorizationId);
     this.assertNotExpired(lease, authorization);
-    const policy = this.budget(authorization.budgetName);
-    if (!policy.allowedModels.includes(model)) {
-      throw new SpendLimitExceededError(`Model "${model}" is not allowed by Ramp budget ${authorization.rampBudgetId}`);
-    }
     const leaseRemaining = lease.allowance - lease.spent - lease.pending;
     const taskRemaining = authorization.allowance - authorization.spent - authorization.pending;
     if (maximumCost <= 0 || maximumCost > leaseRemaining || maximumCost > taskRemaining) {
       throw new SpendLimitExceededError(
-        `Request needs $${maximumCost.toFixed(4)}; lease has $${leaseRemaining.toFixed(4)} and task has $${taskRemaining.toFixed(4)}`
+        `Action needs $${maximumCost.toFixed(4)}; lease has $${leaseRemaining.toFixed(4)} and task has $${taskRemaining.toFixed(4)}`
       );
     }
 
-    const reservation: RequestReservation = {
+    const reservation: ActionReservation = {
       reservationId: randomUUID(),
       authorizationId: authorization.authorizationId,
       leaseId: lease.leaseId,
-      model,
+      actionType,
+      label,
       maximumCost,
     };
     lease.pending += maximumCost;
@@ -257,12 +260,12 @@ export class TaskAuthorizationManager {
     return reservation;
   }
 
-  commitRequest(reservationId: string, inputTokens: number, outputTokens: number, actualCost: number): void {
+  commitAction(reservationId: string, actualCost: number, tokenUsage?: { inputTokens: number; outputTokens: number }): void {
     const reservation = this.getReservation(reservationId);
     if (actualCost > reservation.maximumCost + Number.EPSILON) {
-      this.cancelRequest(reservationId);
+      this.cancelAction(reservationId);
       throw new SpendLimitExceededError(
-        `Provider usage cost $${actualCost.toFixed(4)} exceeded its preauthorized maximum $${reservation.maximumCost.toFixed(4)}`
+        `Actual cost $${actualCost.toFixed(4)} exceeded its preauthorized maximum $${reservation.maximumCost.toFixed(4)}`
       );
     }
     const lease = this.leases.get(reservation.leaseId)!;
@@ -272,21 +275,42 @@ export class TaskAuthorizationManager {
     lease.spent += actualCost;
     authorization.spent += actualCost;
     this.usage.get(authorization.authorizationId)!.push({
-      model: reservation.model,
-      inputTokens,
-      outputTokens,
+      actionType: reservation.actionType,
+      label: reservation.label,
       cost: actualCost,
+      inputTokens: tokenUsage?.inputTokens,
+      outputTokens: tokenUsage?.outputTokens,
     });
     this.reservations.delete(reservationId);
   }
 
-  cancelRequest(reservationId: string): void {
+  cancelAction(reservationId: string): void {
     const reservation = this.getReservation(reservationId);
     const lease = this.leases.get(reservation.leaseId)!;
     const authorization = this.authorizations.get(reservation.authorizationId)!;
     lease.pending -= reservation.maximumCost;
     authorization.pending -= reservation.maximumCost;
     this.reservations.delete(reservationId);
+  }
+
+  /** Thin wrapper over reserveAction: adds the inference-specific allowedModels check. */
+  reserveRequest(credential: string, model: string, maximumCost: number): ActionReservation {
+    const lease = this.authenticate(credential);
+    const authorization = this.getActiveAuthorization(lease.authorizationId);
+    const policy = this.budget(authorization.budgetName);
+    if (!policy.allowedModels.includes(model)) {
+      throw new SpendLimitExceededError(`Model "${model}" is not allowed by Ramp budget ${authorization.rampBudgetId}`);
+    }
+    return this.reserveAction(credential, 'inference', model, maximumCost);
+  }
+
+  /** Thin wrapper over commitAction: records token counts alongside cost. */
+  commitRequest(reservationId: string, inputTokens: number, outputTokens: number, actualCost: number): void {
+    this.commitAction(reservationId, actualCost, { inputTokens, outputTokens });
+  }
+
+  cancelRequest(reservationId: string): void {
+    this.cancelAction(reservationId);
   }
 
   async settleTask(
@@ -300,21 +324,7 @@ export class TaskAuthorizationManager {
     leases.forEach((lease) => (lease.status = 'settled'));
     const events = this.usage.get(authorizationId) ?? [];
     const budget = this.budget(authorization.budgetName);
-    const byModel = new Map<string, ModelUsage>();
-    for (const event of events) {
-      const aggregate = byModel.get(event.model) ?? {
-        model: event.model,
-        requests: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: 0,
-      };
-      aggregate.requests += 1;
-      aggregate.inputTokens += event.inputTokens;
-      aggregate.outputTokens += event.outputTokens;
-      aggregate.cost += event.cost;
-      byModel.set(event.model, aggregate);
-    }
+    const { modelUsage, actionUsage } = this.aggregateUsage(events);
     const receipt: TaskReceipt = {
       receiptId: randomUUID(),
       authorizationId,
@@ -328,7 +338,8 @@ export class TaskAuthorizationManager {
       returned: authorization.allowance - authorization.spent,
       childAgents: leases.filter((lease) => lease.parentLeaseId).length,
       requestCount: events.length,
-      modelUsage: [...byModel.values()],
+      modelUsage,
+      actionUsage,
       costCenter: budget.costCenter,
       startedAt: authorization.createdAt,
       settledAt: new Date().toISOString(),
@@ -346,21 +357,7 @@ export class TaskAuthorizationManager {
       (lease) => lease.authorizationId === authorizationId && lease.parentLeaseId
     ).length;
     const events = this.usage.get(authorizationId) ?? [];
-    const byModel = new Map<string, ModelUsage>();
-    for (const event of events) {
-      const aggregate = byModel.get(event.model) ?? {
-        model: event.model,
-        requests: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: 0,
-      };
-      aggregate.requests += 1;
-      aggregate.inputTokens += event.inputTokens;
-      aggregate.outputTokens += event.outputTokens;
-      aggregate.cost += event.cost;
-      byModel.set(event.model, aggregate);
-    }
+    const { modelUsage } = this.aggregateUsage(events);
 
     return {
       task: authorization.task,
@@ -370,7 +367,7 @@ export class TaskAuthorizationManager {
       requestCount: events.length,
       childAgents,
       elapsedSeconds: (Date.now() - Date.parse(authorization.createdAt)) / 1000,
-      modelUsage: [...byModel.values()],
+      modelUsage,
       requestedShortfall,
     };
   }
@@ -400,6 +397,38 @@ export class TaskAuthorizationManager {
     const lease = this.authenticate(credential);
     this.assertNotExpired(lease, this.getActiveAuthorization(lease.authorizationId));
     return this.publicLease(lease);
+  }
+
+  /** Shared by settleTask() and getEvidenceSnapshot(): modelUsage is inference-only (token-level detail); actionUsage rolls up every action type, inference included. */
+  private aggregateUsage(events: ActionEvent[]): { modelUsage: ModelUsage[]; actionUsage: ActionUsage[] } {
+    const byModel = new Map<string, ModelUsage>();
+    const byActionType = new Map<ActionType, ActionUsage>();
+    for (const event of events) {
+      const actionAggregate = byActionType.get(event.actionType) ?? {
+        actionType: event.actionType,
+        count: 0,
+        cost: 0,
+      };
+      actionAggregate.count += 1;
+      actionAggregate.cost += event.cost;
+      byActionType.set(event.actionType, actionAggregate);
+
+      if (event.actionType === 'inference') {
+        const modelAggregate = byModel.get(event.label) ?? {
+          model: event.label,
+          requests: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cost: 0,
+        };
+        modelAggregate.requests += 1;
+        modelAggregate.inputTokens += event.inputTokens ?? 0;
+        modelAggregate.outputTokens += event.outputTokens ?? 0;
+        modelAggregate.cost += event.cost;
+        byModel.set(event.label, modelAggregate);
+      }
+    }
+    return { modelUsage: [...byModel.values()], actionUsage: [...byActionType.values()] };
   }
 
   revokeTask(authorizationId: string): void {

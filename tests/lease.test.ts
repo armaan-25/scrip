@@ -163,4 +163,52 @@ describe('TaskAuthorizationManager', () => {
     // The child lease can now reserve beyond its original $0.5 allowance.
     expect(() => manager.reserveRequest(child.credential, 'claude-haiku-4-5-20251001', 0.7)).not.toThrow();
   });
+
+  it('reserves and commits a non-inference action with no model concept at all', async () => {
+    const root = await authorize(1);
+    const reservation = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.02);
+    expect(reservation.actionType).toBe('paid_api');
+    expect(reservation.label).toBe('exa_search');
+
+    manager.commitAction(reservation.reservationId, 0.018);
+
+    const receipt = await manager.settleTask(root.authorization.authorizationId);
+    expect(receipt.actual).toBeCloseTo(0.018);
+    expect(receipt.actionUsage).toEqual([{ actionType: 'paid_api', count: 1, cost: 0.018 }]);
+    // A non-inference action never shows up in the token-level modelUsage breakdown.
+    expect(receipt.modelUsage).toHaveLength(0);
+  });
+
+  it('enforces the same atomic reservation limits for any action type', async () => {
+    const root = await authorize(1);
+    manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.7);
+    expect(() => manager.reserveAction(root.credential, 'purchase', 'vendor_x', 0.4)).toThrow(
+      SpendLimitExceededError
+    );
+  });
+
+  it('releases a cancelled action reservation back to the lease', async () => {
+    const root = await authorize(1);
+    const reservation = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.8);
+    manager.cancelAction(reservation.reservationId);
+    expect(() => manager.reserveAction(root.credential, 'paid_api', 'exa_search', 1)).not.toThrow();
+  });
+
+  it('breaks a receipt down by action type across mixed inference and non-inference actions', async () => {
+    const root = await authorize(2);
+    const inferenceRequest = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    manager.commitRequest(inferenceRequest.reservationId, 100, 50, 0.2);
+    const apiAction = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.05);
+    manager.commitAction(apiAction.reservationId, 0.02);
+
+    const receipt = await manager.settleTask(root.authorization.authorizationId);
+    expect(receipt.actual).toBeCloseTo(0.22);
+    const byType = Object.fromEntries(receipt.actionUsage.map((u) => [u.actionType, u]));
+    expect(byType.inference.count).toBe(1);
+    expect(byType.inference.cost).toBeCloseTo(0.2);
+    expect(byType.paid_api.count).toBe(1);
+    expect(byType.paid_api.cost).toBeCloseTo(0.02);
+    expect(receipt.modelUsage).toHaveLength(1);
+    expect(receipt.modelUsage[0].model).toBe('claude-sonnet-5');
+  });
 });

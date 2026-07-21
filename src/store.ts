@@ -9,6 +9,15 @@ export interface ModelUsage {
   cost: number;
 }
 
+/** inference = a model call; paid_api/purchase = any other reserved economic action; other = uncategorized. */
+export type ActionType = 'inference' | 'paid_api' | 'purchase' | 'other';
+
+export interface ActionUsage {
+  actionType: ActionType;
+  count: number;
+  cost: number;
+}
+
 export type TaskOutcomeStatus = 'success' | 'failure' | 'unknown';
 
 export interface TaskReceipt {
@@ -25,6 +34,7 @@ export interface TaskReceipt {
   childAgents: number;
   requestCount: number;
   modelUsage: ModelUsage[];
+  actionUsage: ActionUsage[];
   costCenter: string;
   startedAt: string;
   settledAt: string;

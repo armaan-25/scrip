@@ -41,6 +41,7 @@ function receipt(overrides: Partial<TaskReceipt> = {}): TaskReceipt {
       { model: 'claude-sonnet-5', requests: 1, inputTokens: 100, outputTokens: 50, cost: 0.3 },
       { model: 'claude-haiku-4-5-20251001', requests: 1, inputTokens: 80, outputTokens: 40, cost: 0.2 },
     ],
+    actionUsage: [{ actionType: 'inference', count: 2, cost: 0.5 }],
     costCenter: 'AI compute',
     startedAt: '2026-07-21T10:00:00.000Z',
     settledAt: '2026-07-21T10:05:00.000Z',
