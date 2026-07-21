@@ -88,14 +88,16 @@ npx tsx scripts/demo-scenario.ts  # deterministic, no API key, no cost
 ```
 
 Both write settled task receipts to `.scrip/ramp.json` through
-`MockRampGateway`.
+`MockRampGateway` — or through the real `RampApiGateway`/`Meter` if
+`RAMP_CLIENT_ID`/`RAMP_CLIENT_SECRET` are set in `.env` (see "Real Ramp
+integration" below).
 
 ## Runtime API
 
 ```ts
 const runtime = new ScripRuntime('scrip.yaml', '.scrip/ramp.json');
 
-const task = runtime.authorizations.authorizeTask({
+const task = await runtime.authorizations.authorizeTask({
   budget: 'research',
   taskId: 'review-pr-418',
   task: 'Review PR 418 with two specialist agents',
@@ -115,15 +117,34 @@ await client.run({
   messages,
 });
 
-const receipt = runtime.authorizations.settleTask(
+const receipt = await runtime.authorizations.settleTask(
   task.authorization.authorizationId,
   { status: 'success', evidence: 'PR merged, tests passing' },
 );
 ```
 
-MCP is an optional adapter (`npm run mcp-server`) for agents that benefit
-from tool discovery. It is not the durable product boundary; the task
-authorization engine and Ramp gateway are.
+## Connecting an agent over MCP
+
+`npm run mcp-server` starts the MCP server; `.mcp.json` at the repo root
+means Claude Code auto-discovers it in this project — no setup needed.
+Codex, Cursor, and Claude Desktop use their own MCP config files pointing
+at the same command (`npx tsx bin/mcp-server.ts`); consult each tool's own
+MCP docs for its config file location and format.
+
+**Verified with a real client, not just unit tests:**
+`npx tsx scripts/mcp-smoke-test.ts` spawns the server as a real subprocess
+and drives it over the actual MCP protocol (`@modelcontextprotocol/sdk`'s
+`Client` + `StdioClientTransport`) — lists tools, then calls
+`get_ramp_budget_policy` → `authorize_ai_task` → `delegate_task_allowance`
+→ `settle_ai_task` in sequence. This caught a real bug unit tests couldn't
+(`getBudgetPolicy` was resolving a budget label to a Fund ID before
+calling `getReportedSpend()`, which resolves it again itself — invisible
+to `MockRampGateway`, which doesn't care what ID it's asked about, but
+fatal against the real gateway).
+
+MCP is an optional adapter for agents that benefit from tool discovery.
+It is not the durable product boundary; the task authorization engine and
+Ramp gateway are.
 
 ## What happens when a request doesn't fit
 
@@ -132,9 +153,14 @@ Each budget in `scrip.yaml` sets `on_limit`:
 - **`deny`** — the call fails before any provider I/O (`SpendLimitExceededError`).
 - **`degrade`** — `ScripClient` retries once at the budget's `fallback_model`.
   If that still doesn't fit, it fails the same as `deny`.
-- **`request-approval`** — throws a distinct `ApprovalRequiredError` rather
-  than a flat denial. No approval-callback mechanism is built yet; this
-  just makes the failure mode identifiable for whoever builds one.
+- **`request-approval`** — a decoupled `ApprovalController` (a separate
+  model, shown only a structured evidence snapshot — never the worker's
+  own chat history) renders one verdict per task: a numeric success
+  probability, approve iff `p > 0.5`. Approval grants exactly the blocked
+  request's shortfall and retries once; denial throws
+  `ApprovalRequiredError` and is cached, so a stuck task fails fast
+  instead of re-asking. Requires `controller_model` set on the budget in
+  `scrip.yaml`.
 
 Delegation itself is bounded two ways, independent of `on_limit`:
 `max_delegation_depth` caps how many levels deep a lease tree can go
@@ -144,15 +170,22 @@ delegated slice smaller than the cheapest allowed model's minimum
 meaningful request is rejected, so depth is also naturally curtailed by
 economics on top of the fixed ceiling.
 
-## Current integration boundary
+## Real Ramp integration
 
-The prototype implements the full credential, delegation, and settlement
-lifecycle with a local `MockRampGateway`. Replace that interface with a
-production adapter that reads real Fund balances (OAuth client-credentials
-against Ramp's Funds API) and broadcasts settled receipts to
-`ai-usage/unified` — designed in
-[`docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md`](docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md)
-and
-[`docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md`](docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md),
-not yet implemented. Real Ramp OAuth, webhooks, and provider-key brokering
-are not claimed as complete.
+Drop credentials into `.env` (`RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`,
+`RAMP_API_BASE_URL`, plus `ramp_fund_id` on any budget in `scrip.yaml`)
+and `createRampGateway()` automatically switches from `MockRampGateway` to
+real `RampApiGateway` (Fund balance reads) + `Meter` (usage broadcast to
+AI Usage Tracking) — no code changes.
+
+- **Reads: live-verified** against a real sandbox — real OAuth token
+  exchange (HTTP Basic Auth), real `GET /developer/v1/funds/{id}`, real
+  minor-units-to-dollars conversion. See `docs/ramp-api-notes.md` for
+  every confirmed field and gotcha (e.g. omitting the OAuth `scope`
+  parameter silently returns a scopeless token that then 403s everywhere).
+- **Writes: unit-tested, not yet live-verified** — needs `ai_usage:write`
+  scope added to the same OAuth app used for reads (same app, two scopes,
+  no separate credential needed).
+
+Not yet built: transactional persistence (state is in-memory per Node
+process), webhooks, and provider-key brokering beyond what's here.

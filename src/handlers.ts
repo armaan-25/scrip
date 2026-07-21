@@ -3,7 +3,9 @@ import type { ScripRuntime } from './runtime.js';
 
 export async function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
   const budget = runtime.getBudget(budgetName);
-  const reportedSpend = await runtime.ramp.getReportedSpend(budget.rampFundId ?? budget.rampBudgetId);
+  // Always the label - RampApiGateway resolves it to a real Fund ID itself
+  // (see the same fix and its rationale in TaskAuthorizationManager.getBudgetRemaining()).
+  const reportedSpend = await runtime.ramp.getReportedSpend(budget.rampBudgetId);
   return {
     rampBudgetId: budget.rampBudgetId,
     monthlyLimit: budget.monthlyLimit,

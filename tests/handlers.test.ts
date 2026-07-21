@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authorizeTask, delegateTaskAllowance, getBudgetPolicy, revokeTask, settleTask } from '../src/handlers.js';
 import { InvalidCredentialError } from '../src/lease.js';
 import { ScripRuntime } from '../src/runtime.js';
@@ -23,6 +23,18 @@ describe('task credential handlers', () => {
       availableToAuthorize: 100,
       maxTaskAllowance: 10,
     });
+  });
+
+  it('reads spend using rampBudgetId, never a resolved Fund ID - regression for a real bug caught via the MCP smoke test', async () => {
+    // MockRampGateway's getReportedSpend doesn't care what ID it's given
+    // (an empty store returns 0 either way), which is exactly why this bug
+    // was invisible to it: handlers.ts once resolved budget.rampFundId
+    // before calling getReportedSpend(), double-resolving an ID that
+    // RampApiGateway already resolves itself. A spy on the real gateway
+    // instance is what actually catches the wrong argument.
+    const spy = vi.spyOn(runtime.ramp, 'getReportedSpend');
+    await getBudgetPolicy(runtime, 'research');
+    expect(spy).toHaveBeenCalledWith('ramp-budget-research');
   });
 
   it('authorizes, delegates, and settles a task', async () => {
