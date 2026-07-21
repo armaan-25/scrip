@@ -132,4 +132,35 @@ describe('TaskAuthorizationManager', () => {
     );
     expect(() => manager.delegate(root.credential, 'just-enough', 0.002)).not.toThrow();
   });
+
+  it('builds an evidence snapshot reflecting usage so far, without closing the task', async () => {
+    const root = await authorize(2);
+    manager.delegate(root.credential, 'researcher-1', 0.5);
+    const request = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    manager.commitRequest(request.reservationId, 100, 50, 0.2);
+
+    const snapshot = manager.getEvidenceSnapshot(root.authorization.authorizationId, 0.05);
+
+    expect(snapshot.task).toBe('Review a repository');
+    expect(snapshot.allowance).toBe(2);
+    expect(snapshot.spent).toBeCloseTo(0.2);
+    expect(snapshot.requestCount).toBe(1);
+    expect(snapshot.childAgents).toBe(1);
+    expect(snapshot.modelUsage).toHaveLength(1);
+    expect(snapshot.requestedShortfall).toBe(0.05);
+    expect(snapshot.elapsedSeconds).toBeGreaterThanOrEqual(0);
+
+    // Building the snapshot doesn't settle or otherwise close the task.
+    expect(() => manager.getLeaseForCredential(root.credential)).not.toThrow();
+  });
+
+  it('grants additional allowance to both the lease and the task authorization', async () => {
+    const root = await authorize(1);
+    const child = manager.delegate(root.credential, 'researcher-1', 0.5);
+
+    manager.grantAdditionalAllowance(child.credential, 0.3);
+
+    // The child lease can now reserve beyond its original $0.5 allowance.
+    expect(() => manager.reserveRequest(child.credential, 'claude-haiku-4-5-20251001', 0.7)).not.toThrow();
+  });
 });

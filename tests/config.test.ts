@@ -27,6 +27,12 @@ describe('loadConfig', () => {
     expect(config.budgets.support.rampFundId).toBeUndefined();
   });
 
+  it('loads controllerModel for the request-approval budget', () => {
+    const config = loadConfig('scrip.yaml');
+    expect(config.budgets.escalation.controllerModel).toBe('claude-sonnet-5');
+    expect(config.budgets.research.controllerModel).toBeUndefined();
+  });
+
   it('throws for a missing file', () => {
     expect(() => loadConfig('does-not-exist.yaml')).toThrow();
   });

@@ -16,6 +16,7 @@ export interface RampBudgetConfig {
   maxDelegationDepth: number;
   minRequestInputTokens: number;
   minRequestOutputTokens: number;
+  controllerModel?: string;
 }
 
 export interface ScripConfig {
@@ -37,6 +38,7 @@ interface RawBudget {
   max_delegation_depth: number;
   min_request_input_tokens: number;
   min_request_output_tokens: number;
+  controller_model?: string;
 }
 
 interface RawConfig {
@@ -78,6 +80,7 @@ export function loadConfig(filePath: string): ScripConfig {
       maxDelegationDepth: budget.max_delegation_depth,
       minRequestInputTokens: budget.min_request_input_tokens,
       minRequestOutputTokens: budget.min_request_output_tokens,
+      controllerModel: budget.controller_model,
     };
   }
 

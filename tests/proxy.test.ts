@@ -7,6 +7,28 @@ import { ScripClient } from '../src/proxy.js';
 import { ScripRuntime } from '../src/runtime.js';
 import { MockRampGateway } from '../src/store.js';
 
+/** A single fake client that answers both worker calls and controller
+ * verdict calls (distinguished by the presence of tool_choice), so tests
+ * can exercise the full request-approval flow with one client instance. */
+function fakeAnthropicWithController(
+  workerUsage: { input_tokens: number; output_tokens: number },
+  verdict: { successProbability: number; reasoning: string }
+) {
+  return {
+    messages: {
+      create: vi.fn(async (params: any) => {
+        if (params.tool_choice) {
+          return {
+            id: 'msg_verdict',
+            content: [{ type: 'tool_use', id: 'tool_1', name: 'render_verdict', input: verdict }],
+          };
+        }
+        return { id: 'msg_test', usage: workerUsage, content: [{ type: 'text', text: 'ok' }] };
+      }),
+    },
+  } as any;
+}
+
 let tmpDir: string;
 let runtime: ScripRuntime;
 let ramp: MockRampGateway;
@@ -131,14 +153,80 @@ describe('ScripClient', () => {
     expect(anthropic.messages.create).not.toHaveBeenCalled();
   });
 
-  it('throws ApprovalRequiredError when onLimit is request-approval and the request does not fit', async () => {
+  it('throws ApprovalRequiredError when the controller denies', async () => {
     const root = await issueOnBudget('escalation', 0.0001);
-    const anthropic = fakeAnthropic();
+    const anthropic = fakeAnthropicWithController(
+      { input_tokens: 500, output_tokens: 300 },
+      { successProbability: 0.2, reasoning: 'Insufficient evidence of progress.' }
+    );
     const client = new ScripClient(runtime, anthropic);
     await expect(
       client.run({ ...request, credential: root.credential, model: 'claude-sonnet-5', maxTokens: 300 })
     ).rejects.toThrow(ApprovalRequiredError);
-    expect(anthropic.messages.create).not.toHaveBeenCalled();
+    // The controller call itself happened; the worker call did not.
+    expect(anthropic.messages.create).toHaveBeenCalledOnce();
+  });
+
+  it('grants exactly the shortfall and retries when the controller approves', async () => {
+    const root = await issueOnBudget('escalation', 0.0001);
+    const anthropic = fakeAnthropicWithController(
+      { input_tokens: 500, output_tokens: 300 },
+      { successProbability: 0.9, reasoning: 'Task is on track.' }
+    );
+    const client = new ScripClient(runtime, anthropic);
+
+    const result = await client.run({
+      ...request,
+      credential: root.credential,
+      model: 'claude-sonnet-5',
+      maxTokens: 300,
+    });
+
+    expect(result.model).toBe('claude-sonnet-5');
+    expect(anthropic.messages.create).toHaveBeenCalledTimes(2); // controller verdict + worker call
+  });
+
+  it('caches the controller verdict - a second blocked request in the same task does not re-invoke it', async () => {
+    const root = await issueOnBudget('escalation', 0.0001);
+    const anthropic = fakeAnthropicWithController(
+      { input_tokens: 500, output_tokens: 300 },
+      { successProbability: 0.2, reasoning: 'Insufficient evidence of progress.' }
+    );
+    const client = new ScripClient(runtime, anthropic);
+
+    await expect(
+      client.run({ ...request, credential: root.credential, model: 'claude-sonnet-5', maxTokens: 300 })
+    ).rejects.toThrow(ApprovalRequiredError);
+    await expect(
+      client.run({ ...request, credential: root.credential, model: 'claude-sonnet-5', maxTokens: 300 })
+    ).rejects.toThrow(ApprovalRequiredError);
+
+    // Only the first attempt should have invoked the controller.
+    expect(anthropic.messages.create).toHaveBeenCalledOnce();
+  });
+
+  it('throws a clear config error when request-approval is set but no controllerModel is configured', async () => {
+    // Re-load config without a controller_model by pointing at a temp copy.
+    const noControllerYaml = path.join(tmpDir, 'no-controller.yaml');
+    const original = fs.readFileSync('scrip.yaml', 'utf-8');
+    fs.writeFileSync(noControllerYaml, original.replace(/\n\s*controller_model:.*\n/, '\n'));
+    const noControllerRuntime = new ScripRuntime(noControllerYaml, path.join(tmpDir, 'unused2.json'), ramp);
+
+    const root = await noControllerRuntime.authorizations.authorizeTask({
+      budget: 'escalation',
+      taskId: 'task-1',
+      task: 'Review code',
+      allowance: 0.0001,
+    });
+    const anthropic = fakeAnthropicWithController(
+      { input_tokens: 500, output_tokens: 300 },
+      { successProbability: 0.9, reasoning: 'n/a' }
+    );
+    const client = new ScripClient(noControllerRuntime, anthropic);
+
+    await expect(
+      client.run({ ...request, credential: root.credential, model: 'claude-sonnet-5', maxTokens: 300 })
+    ).rejects.toThrow(/controllerModel/);
   });
 
   it('still throws SpendLimitExceededError unchanged when onLimit is deny', async () => {

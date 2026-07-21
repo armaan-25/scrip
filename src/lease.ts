@@ -44,6 +44,18 @@ export interface IssuedChildLease {
   credential: string;
 }
 
+export interface TaskEvidenceSnapshot {
+  task: string;
+  allowance: number;
+  spent: number;
+  pending: number;
+  requestCount: number;
+  childAgents: number;
+  elapsedSeconds: number;
+  modelUsage: ModelUsage[];
+  requestedShortfall: number;
+}
+
 export interface RequestReservation {
   reservationId: string;
   authorizationId: string;
@@ -325,6 +337,50 @@ export class TaskAuthorizationManager {
     };
     await this.ramp.reportTaskUsage(receipt);
     return receipt;
+  }
+
+  /** Read-only, non-destructive - unlike settleTask(), doesn't close or settle anything. */
+  getEvidenceSnapshot(authorizationId: string, requestedShortfall: number): TaskEvidenceSnapshot {
+    const authorization = this.getActiveAuthorization(authorizationId);
+    const childAgents = [...this.leases.values()].filter(
+      (lease) => lease.authorizationId === authorizationId && lease.parentLeaseId
+    ).length;
+    const events = this.usage.get(authorizationId) ?? [];
+    const byModel = new Map<string, ModelUsage>();
+    for (const event of events) {
+      const aggregate = byModel.get(event.model) ?? {
+        model: event.model,
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: 0,
+      };
+      aggregate.requests += 1;
+      aggregate.inputTokens += event.inputTokens;
+      aggregate.outputTokens += event.outputTokens;
+      aggregate.cost += event.cost;
+      byModel.set(event.model, aggregate);
+    }
+
+    return {
+      task: authorization.task,
+      allowance: authorization.allowance,
+      spent: authorization.spent,
+      pending: authorization.pending,
+      requestCount: events.length,
+      childAgents,
+      elapsedSeconds: (Date.now() - Date.parse(authorization.createdAt)) / 1000,
+      modelUsage: [...byModel.values()],
+      requestedShortfall,
+    };
+  }
+
+  /** Scoped to exactly the blocked credential's lease - increases both its and the task's ceiling. */
+  grantAdditionalAllowance(credential: string, amount: number): void {
+    const lease = this.authenticate(credential);
+    const authorization = this.getActiveAuthorization(lease.authorizationId);
+    lease.allowance += amount;
+    authorization.allowance += amount;
   }
 
   getAuthorization(authorizationId: string): TaskAuthorization {

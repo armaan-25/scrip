@@ -44,3 +44,4 @@ budgets:
     max_delegation_depth: 3
     min_request_input_tokens: 500
     min_request_output_tokens: 200
+    controller_model: claude-sonnet-5
