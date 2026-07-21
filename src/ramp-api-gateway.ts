@@ -1,5 +1,6 @@
 import { LocalReceiptStore, type RampGateway, type TaskReceipt } from './store.js';
 import { RampOAuthClient, type HttpFetch } from './ramp-oauth.js';
+import type { Meter } from './meter.js';
 
 export interface RampApiGatewayConfig {
   clientId: string;
@@ -22,10 +23,10 @@ interface RampFundResponse {
 
 /**
  * Reads real Ramp Fund balances via OAuth (confirmed live schema, see
- * docs/ramp-api-notes.md). Writes stay local (LocalReceiptStore) - a real
- * Ramp financial write for arbitrary usage events isn't possible without
- * Vault card issuance, which this project doesn't have. See Meter (design
- * only, not yet built) for the ai-usage/unified broadcast write path.
+ * docs/ramp-api-notes.md). Writes always go to LocalReceiptStore first,
+ * and best-effort broadcast to Ramp's AI Usage Tracking via an optional
+ * injected Meter - a failed broadcast never blocks or throws, since the
+ * local receipt is already the source of truth by that point.
  *
  * getReportedSpend/reportTaskUsage are both called with the same
  * rampBudgetId label TaskAuthorizationManager already uses everywhere else
@@ -39,7 +40,8 @@ export class RampApiGateway implements RampGateway {
   constructor(
     private config: RampApiGatewayConfig,
     receiptStorePath: string,
-    private fetchFn: HttpFetch = fetch
+    private fetchFn: HttpFetch = fetch,
+    private readonly meter?: Meter
   ) {
     this.oauth = new RampOAuthClient(
       {
@@ -75,5 +77,19 @@ export class RampApiGateway implements RampGateway {
 
   async reportTaskUsage(receipt: TaskReceipt): Promise<void> {
     this.receipts.addReceipt(receipt);
+
+    if (this.meter) {
+      try {
+        await this.meter.reportUsage(receipt);
+      } catch (error) {
+        // The local write already succeeded and is the source of truth for
+        // this process; a failed broadcast to Ramp is a reporting gap, not
+        // a control failure - the money's already committed by this point.
+        console.warn(
+          `[meter] failed to broadcast usage for receipt ${receipt.receiptId}: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
   }
 }

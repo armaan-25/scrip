@@ -1,5 +1,6 @@
 import { loadConfig, type RampBudgetConfig, type ScripConfig } from './config.js';
 import { TaskAuthorizationManager } from './lease.js';
+import { Meter } from './meter.js';
 import { RampApiGateway } from './ramp-api-gateway.js';
 import { BudgetRouter } from './router.js';
 import { MockRampGateway, type RampGateway } from './store.js';
@@ -14,8 +15,13 @@ export function createRampGateway(storePath: string, config: ScripConfig): RampG
     for (const budget of Object.values(config.budgets)) {
       if (budget.rampFundId) fundIdsByBudget[budget.rampBudgetId] = budget.rampFundId;
     }
+    // Same OAuth app as the read side, scoped to ai_usage:write instead of
+    // funds:read (Option A: one app, two scopes - see docs/ramp-api-notes.md).
+    // Broadcast failures (e.g. the scope not added yet) are logged and
+    // swallowed by RampApiGateway, never thrown, so it's safe to always wire in.
+    const meter = new Meter({ clientId, clientSecret, baseUrl, source: 'scrip' });
     console.log(`[ramp] using RampApiGateway (${baseUrl})`);
-    return new RampApiGateway({ clientId, clientSecret, baseUrl, fundIdsByBudget }, storePath);
+    return new RampApiGateway({ clientId, clientSecret, baseUrl, fundIdsByBudget }, storePath, fetch, meter);
   }
 
   console.log('[ramp] RAMP_CLIENT_ID/RAMP_CLIENT_SECRET not set, using MockRampGateway');

@@ -94,13 +94,26 @@ Useful for testing without creating a new Fund:
 
 ## AI Usage Tracking (`ai-usage/unified`)
 
-Not yet tested live — no `RAMP_AI_USAGE_API_KEY` available yet. Still
-carrying the schema from Ramp's docs (see
-`docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md`), not
-independently re-verified against a real response. Auth header format for
-this endpoint's static API key is assumed `Authorization: Bearer <key>` —
-**not yet confirmed**, since it uses a different auth model than the OAuth
-flow above and wasn't tested.
+- **Protocol confirmed via Ramp's own internal assistant (2026-07-21):**
+  `POST /developer/v1/ai-usage/unified` with the JSON body
+  (`schema_version` + `events[]`) is "the designated, provider-neutral
+  ingestion path designed specifically for third-party platforms and
+  custom integrations." OpenRouter's OTLP-based
+  `/developer/v1/ai-usage/openrouter` endpoint is an explicitly
+  partner-specific path, "not part of the public developer API surface,"
+  not a replacement for `/unified`. No deprecation — `/unified` is the
+  standard, supported path for a custom platform like this one.
+- **Auth: reusing the same OAuth app, not a separate static key** (also
+  confirmed via Ramp's assistant). Add `ai_usage:write` to the same "Scrip"
+  app's scopes alongside `funds:read`; the same client-credentials flow
+  (`RampOAuthClient`) gets a Bearer token scoped to `ai_usage:write` for
+  this endpoint. A separate static API key (Settings → Integrations →
+  Connect, or the "API keys" tab on the Developer settings page) also
+  works but isn't needed — one OAuth app, two scopes.
+- Request/response schema still carried from Ramp's docs (see
+  `docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md`),
+  not yet independently re-verified against a real response — that's the
+  next live smoke test once the `ai_usage:write` scope is added.
 
 ## Known constraints
 

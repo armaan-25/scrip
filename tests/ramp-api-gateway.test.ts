@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HttpFetch } from '../src/ramp-oauth.js';
 import { RampApiGateway } from '../src/ramp-api-gateway.js';
+import { Meter } from '../src/meter.js';
 import type { TaskReceipt } from '../src/store.js';
 
 let tmpDir: string;
@@ -136,5 +137,42 @@ describe('RampApiGateway', () => {
     const persisted = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
     expect(persisted.receipts).toHaveLength(1);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('also broadcasts via Meter when one is provided, in addition to the local write', async () => {
+    const fetchFn = fakeFetch({
+      token: { access_token: 'token-abc', expires_in: 3600 },
+      fund: realFundResponse(0),
+    });
+    const meter = new Meter(
+      { clientId: 'client-1', clientSecret: 'secret-1', baseUrl: 'https://demo-api.ramp.com', source: 'scrip' },
+      fetchFn
+    );
+    const reportSpy = vi.spyOn(meter, 'reportUsage');
+    const gateway = new RampApiGateway(config, receiptPath, fetchFn, meter);
+
+    await gateway.reportTaskUsage(receipt());
+
+    const persisted = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
+    expect(persisted.receipts).toHaveLength(1);
+    expect(reportSpy).toHaveBeenCalledOnce();
+  });
+
+  it('swallows a Meter broadcast failure - the local write still succeeds and reportTaskUsage does not throw', async () => {
+    const fetchFn = fakeFetch({
+      token: { access_token: 'token-abc', expires_in: 3600 },
+      fund: realFundResponse(0),
+    });
+    const meter = new Meter(
+      { clientId: 'client-1', clientSecret: 'secret-1', baseUrl: 'https://demo-api.ramp.com', source: 'scrip' },
+      fetchFn
+    );
+    vi.spyOn(meter, 'reportUsage').mockRejectedValue(new Error('broadcast unavailable'));
+    const gateway = new RampApiGateway(config, receiptPath, fetchFn, meter);
+
+    await expect(gateway.reportTaskUsage(receipt())).resolves.toBeUndefined();
+
+    const persisted = JSON.parse(fs.readFileSync(receiptPath, 'utf-8'));
+    expect(persisted.receipts).toHaveLength(1);
   });
 });
