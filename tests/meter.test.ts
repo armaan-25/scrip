@@ -72,7 +72,7 @@ describe('Meter', () => {
       occurred_at: '2026-07-21T10:05:00.000Z',
       provider: 'anthropic',
       model: 'claude-sonnet-5',
-      usage: { input_tokens: 100, output_tokens: 50 },
+      usage: { input_tokens: 100, output_tokens: 50, meters: [] },
       attribution: {
         session_id: 'auth-1',
         tags: {
@@ -87,15 +87,20 @@ describe('Meter', () => {
     expect(sonnetEvent.reported_cost).toMatchObject({ amount: '0.3', currency: 'USD', estimated: false });
   });
 
-  it('throws on a non-2xx response', async () => {
+  it('throws on a non-2xx response, including the response body for debugging', async () => {
     const fetchFn = vi.fn(async (url: string | URL) => {
       if (url.toString().includes('/token')) {
         return { ok: true, status: 200, json: async () => ({ access_token: 'token-abc', expires_in: 3600 }) } as Response;
       }
-      return { ok: false, status: 422, json: async () => ({ error: 'invalid_event' }) } as Response;
+      return {
+        ok: false,
+        status: 422,
+        text: async () => JSON.stringify({ error: 'invalid_event', message: 'events[0].provider is required' }),
+      } as Response;
     }) as unknown as HttpFetch;
     const meter = new Meter(config, fetchFn);
 
     await expect(meter.reportUsage(receipt())).rejects.toThrow(/422/);
+    await expect(meter.reportUsage(receipt())).rejects.toThrow(/events\[0\]\.provider is required/);
   });
 });

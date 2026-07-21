@@ -110,10 +110,15 @@ Useful for testing without creating a new Fund:
   this endpoint. A separate static API key (Settings → Integrations →
   Connect, or the "API keys" tab on the Developer settings page) also
   works but isn't needed — one OAuth app, two scopes.
-- Request/response schema still carried from Ramp's docs (see
-  `docs/superpowers/specs/2026-07-18-ai-usage-tracking-positioning.md`),
-  not yet independently re-verified against a real response — that's the
-  next live smoke test once the `ai_usage:write` scope is added.
+- **Live-verified 2026-07-21** via `scripts/smoke-test-meter.ts` — real
+  `204`-equivalent success (no error thrown) broadcasting a real
+  `TaskReceipt` to the sandbox.
+- **Correction, confirmed via a real `400`:** `events[N].usage.meters` is
+  **required**, not optional as Ramp's own docs described it ("Additional
+  provider-specific dimensions" reads as optional). The real error:
+  `{"error_v2":{"fields_validation":{"events.0.usage.meters":"Field required"}}}`.
+  `Meter` now always sends `meters: []` when there's nothing
+  provider-specific to report.
 
 ## Known constraints
 

@@ -46,6 +46,11 @@ export class Meter {
         cache_read_input_tokens: 0,
         cache_write_input_tokens: 0,
         reasoning_output_tokens: 0,
+        // Confirmed required by a real 400 response (fields_validation:
+        // "events.0.usage.meters": "Field required") - Ramp's own docs
+        // described this as optional. No additional provider-specific
+        // dimensions to report, so an empty array.
+        meters: [],
       },
       pricing_context: {
         service_tier: 'standard',
@@ -83,7 +88,8 @@ export class Meter {
     });
 
     if (!response.ok) {
-      throw new Error(`Ramp ai-usage/unified broadcast failed with status ${response.status}`);
+      const body = await response.text().catch(() => '<no response body>');
+      throw new Error(`Ramp ai-usage/unified broadcast failed with status ${response.status}: ${body}`);
     }
   }
 }
