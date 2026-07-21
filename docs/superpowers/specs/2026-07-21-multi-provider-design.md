@@ -121,18 +121,28 @@ SDK already handles). Implements `createMessage` against
 
 ## Config addition
 
-`scrip.yaml`'s `research` budget gains real OpenAI models alongside the
-existing Claude models in `allowed_models` — confirmed current model IDs,
-not guessed: `gpt-5.6-sol` ($5.00/$30.00 per 1M tokens) and `gpt-5.6-luna`
-($1.00/$6.00 per 1M tokens), OpenAI's current frontier and budget tiers
-respectively (as of 2026-07). This lets the demo scenario show
-`BudgetRouter` picking between providers, not just between two Anthropic
-models — proving the point end to end. `gpt-5.6-luna`'s price is
-identical to `claude-haiku-4-5-20251001`'s ($1.00/$5.00 — close enough to
-be a real cross-provider price tie for routing purposes), giving a clean
-worked example where the router's choice between providers is genuinely
-a coin flip on price alone, decided by whichever appears first in
-`allowedModels`.
+`scrip.yaml` gains a new `cross_provider_demo` budget rather than adding
+OpenAI models into the existing `research` budget. Reason for the
+correction (caught before implementation, not after): `BudgetRouter`
+always prefers the *priciest* model in `allowedModels` that still fits
+the remaining balance (see `src/router.ts` — it sorts `allowedModels` by
+`outputPrice` descending and returns the first that fits). `research` is
+the budget every existing live/demo script (`demo/run-demo.ts`,
+`scripts/demo-scenario.ts`, `scripts/demo-generic-action.ts`) already
+runs against with a real Anthropic client and no OpenAI client wired in.
+Adding `gpt-5.6-sol` ($5.00/$30.00 per 1M tokens) — priced above
+`claude-sonnet-5` — to `research.allowed_models` would make the router
+silently prefer it over Claude in those already-verified demos, breaking
+them the moment `OPENAI_API_KEY` isn't set (which it isn't, today).
+
+Instead: a new `cross_provider_demo` budget, `allowed_models: [claude-sonnet-5, gpt-5.6-luna]`,
+exercised only by a new `scripts/demo-cross-provider.ts` using fake
+providers for both models (same deterministic, no-API-key pattern as
+`scripts/demo-scenario.ts`) — proving `BudgetRouter`/`ScripClient`
+genuinely dispatch to different `ModelProvider` implementations by
+model name, without touching any budget an existing live demo depends on.
+`gpt-5.6-luna` ($1.00/$6.00 per 1M tokens) is the real current OpenAI
+budget-tier model, confirmed via `developers.openai.com/api/docs/models`.
 
 ## Testing
 

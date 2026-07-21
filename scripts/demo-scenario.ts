@@ -6,20 +6,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Deterministic, no API key required: a fake Anthropic client returns fixed
-// token usage instead of making a real network call, so this script is
+// Deterministic, no API key required: a fake provider returns fixed token
+// usage instead of making a real network call, so this script is
 // reproducible and free to run, while exercising the real
 // TaskAuthorizationManager/ScripClient enforcement code paths.
-function fakeAnthropic(inputTokens: number, outputTokens: number) {
+function fakeProvider(inputTokens: number, outputTokens: number) {
   return {
-    messages: {
-      create: async () => ({
-        id: 'msg_demo',
-        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
-        content: [{ type: 'text', text: 'ok' }],
-      }),
+    createMessage: async () => ({ content: 'ok', inputTokens, outputTokens }),
+    renderVerdict: async () => {
+      throw new Error('not used in this demo');
     },
-  } as any;
+  };
 }
 
 interface AgentOutcome {
@@ -35,7 +32,8 @@ async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-demo-'));
   const ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
   const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
-  const client = new ScripClient(runtime, fakeAnthropic(400, 250));
+  const provider = fakeProvider(400, 250);
+  const client = new ScripClient(runtime, { anthropic: provider, openai: provider });
 
   const taskAllowance = 0.05;
   const task = await authorizeTask(runtime, {

@@ -1,32 +1,12 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import type { TaskEvidenceSnapshot } from './lease.js';
+import { getModelPrice } from './pricing.js';
+import type { ModelProvider, ProviderName } from './providers/model-provider.js';
 
 export interface ControllerVerdict {
   approved: boolean;
   successProbability: number;
   reasoning: string;
 }
-
-type AnthropicLike = Pick<Anthropic, 'messages'>;
-
-const RENDER_VERDICT_TOOL = {
-  name: 'render_verdict',
-  description: 'Render a scored verdict on whether to approve additional budget for a task.',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      successProbability: {
-        type: 'number',
-        description: 'Probability, from 0 to 1, that granting the requested additional budget results in the task completing successfully.',
-      },
-      reasoning: {
-        type: 'string',
-        description: 'Brief reasoning grounded only in the evidence provided.',
-      },
-    },
-    required: ['successProbability', 'reasoning'],
-  },
-};
 
 function buildPrompt(evidence: TaskEvidenceSnapshot): string {
   return [
@@ -56,29 +36,15 @@ function buildPrompt(evidence: TaskEvidenceSnapshot): string {
  * free-text field in TaskEvidenceSnapshot a recommendation could hide in.
  */
 export class ApprovalController {
-  constructor(private anthropic: AnthropicLike, private model: string) {}
+  constructor(private providers: Record<ProviderName, ModelProvider>, private model: string) {}
 
   async evaluate(evidence: TaskEvidenceSnapshot): Promise<ControllerVerdict> {
-    const message = (await this.anthropic.messages.create({
+    const provider = this.providers[getModelPrice(this.model).provider as ProviderName];
+    const { successProbability, reasoning } = await provider.renderVerdict({
       model: this.model,
-      max_tokens: 512,
-      tools: [RENDER_VERDICT_TOOL],
-      tool_choice: { type: 'tool', name: 'render_verdict' },
-      messages: [{ role: 'user', content: buildPrompt(evidence) }],
-    })) as Anthropic.Message;
+      prompt: buildPrompt(evidence),
+    });
 
-    const toolUse = message.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use' && block.name === 'render_verdict'
-    );
-    if (!toolUse) {
-      throw new Error('Approval controller did not return a render_verdict tool call');
-    }
-
-    const input = toolUse.input as { successProbability: number; reasoning: string };
-    return {
-      successProbability: input.successProbability,
-      reasoning: input.reasoning,
-      approved: input.successProbability > 0.5,
-    };
+    return { successProbability, reasoning, approved: successProbability > 0.5 };
   }
 }

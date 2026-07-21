@@ -6,11 +6,25 @@ if (existsSync('.env')) {
 import Anthropic from '@anthropic-ai/sdk';
 import { authorizeTask, delegateTaskAllowance, settleTask } from '../src/handlers.js';
 import { ScripClient } from '../src/proxy.js';
+import { AnthropicProvider } from '../src/providers/anthropic-provider.js';
+import type { ModelProvider } from '../src/providers/model-provider.js';
 import { ScripRuntime } from '../src/runtime.js';
 
 async function main() {
   const runtime = new ScripRuntime('scrip.yaml', '.scrip/ramp.json');
-  const client = new ScripClient(runtime, new Anthropic());
+  // The 'research' budget this demo runs against has no OpenAI models in
+  // allowed_models, so the openai provider is never actually invoked - a
+  // real client isn't constructed unless OPENAI_API_KEY is set, keeping
+  // this demo runnable with only an Anthropic key.
+  const openaiProvider: ModelProvider = {
+    createMessage: () => {
+      throw new Error('OpenAI provider not configured - set OPENAI_API_KEY to use an OpenAI model');
+    },
+    renderVerdict: () => {
+      throw new Error('OpenAI provider not configured - set OPENAI_API_KEY to use an OpenAI model');
+    },
+  };
+  const client = new ScripClient(runtime, { anthropic: new AnthropicProvider(new Anthropic()), openai: openaiProvider });
   const task = await authorizeTask(runtime, {
     budget: 'research',
     taskId: `research-${Date.now()}`,

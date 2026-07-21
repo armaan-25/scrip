@@ -7,6 +7,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export interface ModelPrice {
   inputPrice: number; // dollars per 1,000,000 input tokens
   outputPrice: number; // dollars per 1,000,000 output tokens
+  // 'other' covers the many non-Anthropic/non-OpenAI entries ported from
+  // agentopt's reference table (Gemini, Qwen, etc.) that Scrip doesn't
+  // have a ModelProvider for - out of scope per the multi-provider design.
+  provider: 'anthropic' | 'openai' | 'other';
 }
 
 const priceTable: Record<string, ModelPrice> = JSON.parse(

@@ -1,7 +1,7 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import { ApprovalController, type ControllerVerdict } from './approval-controller.js';
 import { ApprovalRequiredError, SpendLimitExceededError, type RequestReservation } from './lease.js';
-import { computeCost } from './pricing.js';
+import { computeCost, getModelPrice } from './pricing.js';
+import type { ModelProvider, ProviderMessage, ProviderName } from './providers/model-provider.js';
 import type { ScripRuntime } from './runtime.js';
 
 export interface InferenceOptions {
@@ -9,16 +9,14 @@ export interface InferenceOptions {
   model?: string;
   estimatedInputTokens: number;
   maxTokens: number;
-  messages: Anthropic.MessageParam[];
+  messages: ProviderMessage[];
 }
 
 export interface InferenceResult {
   model: string;
   actualCost: number;
-  message: Anthropic.Message;
+  content: string;
 }
-
-type AnthropicLike = Pick<Anthropic, 'messages'>;
 
 /** Provider proxy: every request is preauthorized against the task credential before network I/O. */
 export class ScripClient {
@@ -27,7 +25,7 @@ export class ScripClient {
   // controller. Keyed by authorizationId.
   private readonly controllerVerdicts = new Map<string, ControllerVerdict>();
 
-  constructor(private runtime: ScripRuntime, private anthropic: AnthropicLike) {}
+  constructor(private runtime: ScripRuntime, private providers: Record<ProviderName, ModelProvider>) {}
 
   async run(options: InferenceOptions): Promise<InferenceResult> {
     const authorization = this.runtime.authorizations.getAuthorizationForCredential(options.credential);
@@ -77,19 +75,11 @@ export class ScripClient {
     }
 
     try {
-      const message = (await this.anthropic.messages.create({
-        model,
-        max_tokens: options.maxTokens,
-        messages: options.messages,
-      })) as Anthropic.Message;
-      const actualCost = computeCost(model, message.usage.input_tokens, message.usage.output_tokens);
-      this.runtime.authorizations.commitRequest(
-        reservation.reservationId,
-        message.usage.input_tokens,
-        message.usage.output_tokens,
-        actualCost
-      );
-      return { model, actualCost, message };
+      const provider = this.providers[getModelPrice(model).provider as ProviderName];
+      const response = await provider.createMessage({ model, maxTokens: options.maxTokens, messages: options.messages });
+      const actualCost = computeCost(model, response.inputTokens, response.outputTokens);
+      this.runtime.authorizations.commitRequest(reservation.reservationId, response.inputTokens, response.outputTokens, actualCost);
+      return { model, actualCost, content: response.content };
     } catch (error) {
       try {
         this.runtime.authorizations.cancelRequest(reservation.reservationId);
@@ -127,7 +117,7 @@ export class ScripClient {
       // task's lease/authorization - it's an external check, not the
       // task's own work, and billing it to the budget it's gatekeeping
       // would be circular.
-      const controller = new ApprovalController(this.anthropic, budget.controllerModel);
+      const controller = new ApprovalController(this.providers, budget.controllerModel);
       verdict = await controller.evaluate(evidence);
       this.controllerVerdicts.set(authorizationId, verdict);
       console.log(

@@ -10,23 +10,21 @@ import path from 'node:path';
 // gates a real Anthropic call can also gate an unrelated paid API call,
 // with the same atomicity guarantees, no new infrastructure - the narrow
 // proof of "economic control plane," not the full multi-rail vision.
-function fakeAnthropic(inputTokens: number, outputTokens: number) {
+function fakeProvider(inputTokens: number, outputTokens: number) {
   return {
-    messages: {
-      create: async () => ({
-        id: 'msg_demo',
-        usage: { input_tokens: inputTokens, output_tokens: outputTokens },
-        content: [{ type: 'text', text: 'ok' }],
-      }),
+    createMessage: async () => ({ content: 'ok', inputTokens, outputTokens }),
+    renderVerdict: async () => {
+      throw new Error('not used in this demo');
     },
-  } as any;
+  };
 }
 
 async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-generic-action-'));
   const ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
   const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
-  const client = new ScripClient(runtime, fakeAnthropic(500, 300));
+  const provider = fakeProvider(500, 300);
+  const client = new ScripClient(runtime, { anthropic: provider, openai: provider });
 
   const task = await authorizeTask(runtime, {
     budget: 'research',

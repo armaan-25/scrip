@@ -3,8 +3,9 @@ import { computeCost, getModelPrice } from '../src/pricing.js';
 
 describe('pricing', () => {
   it('returns known prices for the demo models', () => {
-    expect(getModelPrice('claude-sonnet-5')).toEqual({ inputPrice: 3.0, outputPrice: 15.0 });
-    expect(getModelPrice('claude-haiku-4-5-20251001')).toEqual({ inputPrice: 1.0, outputPrice: 5.0 });
+    expect(getModelPrice('claude-sonnet-5')).toEqual({ inputPrice: 3.0, outputPrice: 15.0, provider: 'anthropic' });
+    expect(getModelPrice('claude-haiku-4-5-20251001')).toEqual({ inputPrice: 1.0, outputPrice: 5.0, provider: 'anthropic' });
+    expect(getModelPrice('gpt-5.6-luna')).toEqual({ inputPrice: 1.0, outputPrice: 6.0, provider: 'openai' });
   });
 
   it('throws for an unknown model', () => {
