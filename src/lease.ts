@@ -8,6 +8,7 @@ import {
   type ActionType,
   type ActionUsage,
   type ModelUsage,
+  type OutcomeEvidence,
   type RampGateway,
   type TaskOutcomeStatus,
   type TaskReceipt,
@@ -410,7 +411,7 @@ export class TaskAuthorizationManager {
 
   async settleTask(
     authorizationId: string,
-    outcome?: { status: TaskOutcomeStatus; evidence?: string }
+    outcome?: { status: TaskOutcomeStatus; evidence?: string; evidenceDetail?: OutcomeEvidence[] }
   ): Promise<TaskReceipt> {
     const authorization = this.getActiveAuthorization(authorizationId);
     if (authorization.pending > 0) throw new Error('Cannot settle a task with requests in flight');
@@ -443,6 +444,7 @@ export class TaskAuthorizationManager {
       settledAt: new Date().toISOString(),
       outcome: outcome?.status ?? 'unknown',
       outcomeEvidence: outcome?.evidence,
+      evidenceDetail: outcome?.evidenceDetail,
     };
     await this.ramp.reportTaskUsage(receipt);
     this.persist();

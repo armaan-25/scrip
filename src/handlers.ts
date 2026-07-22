@@ -1,4 +1,4 @@
-import type { TaskOutcomeStatus } from './store.js';
+import type { OutcomeEvidence, TaskOutcomeStatus } from './store.js';
 import type { ScripRuntime } from './runtime.js';
 
 export async function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
@@ -35,7 +35,7 @@ export function delegateTaskAllowance(
 export async function settleTask(
   runtime: ScripRuntime,
   authorizationId: string,
-  outcome?: { status: TaskOutcomeStatus; evidence?: string }
+  outcome?: { status: TaskOutcomeStatus; evidence?: string; evidenceDetail?: OutcomeEvidence[] }
 ) {
   return runtime.authorizations.settleTask(authorizationId, outcome);
 }
