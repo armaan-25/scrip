@@ -34,10 +34,10 @@ export class ScripRuntime {
   readonly authorizations: TaskAuthorizationManager;
   readonly router = new BudgetRouter();
 
-  constructor(configPath: string, storePath: string, ramp?: RampGateway) {
+  constructor(configPath: string, storePath: string, ramp?: RampGateway, leaseStorePath?: string) {
     this.config = loadConfig(configPath);
     this.ramp = ramp ?? createRampGateway(storePath, this.config);
-    this.authorizations = new TaskAuthorizationManager(this.config, this.ramp);
+    this.authorizations = new TaskAuthorizationManager(this.config, this.ramp, leaseStorePath);
   }
 
   getBudget(name: string): RampBudgetConfig {

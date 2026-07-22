@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "mcp-server": "tsx bin/mcp-server.ts",
+    "cli": "tsx bin/cli.ts",
     "demo": "tsx demo/run-demo.ts"
   },
   "dependencies": {

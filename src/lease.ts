@@ -1,4 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
 import type { ActionType, ActionUsage, ModelUsage, RampGateway, TaskOutcomeStatus, TaskReceipt } from './store.js';
@@ -80,6 +82,14 @@ interface InternalLease extends InferenceLease {
   credentialHash: Buffer;
 }
 
+/** On-disk shape for optional cross-process persistence - see storePath on TaskAuthorizationManager. */
+interface PersistedLeaseState {
+  authorizations: TaskAuthorization[];
+  leases: (Omit<InternalLease, 'credentialHash'> & { credentialHash: string })[];
+  reservations: ActionReservation[];
+  usage: Record<string, ActionEvent[]>;
+}
+
 export class SpendLimitExceededError extends Error {}
 export class InvalidCredentialError extends Error {}
 export class ApprovalRequiredError extends Error {}
@@ -103,7 +113,39 @@ export class TaskAuthorizationManager {
   private reservations = new Map<string, ActionReservation>();
   private usage = new Map<string, ActionEvent[]>();
 
-  constructor(private config: ScripConfig, private ramp: RampGateway) {}
+  // Optional: authorizations/leases/reservations/usage are in-memory only by
+  // default (matches every caller before this was added - the MCP server and
+  // demo scripts are each one long-running process end to end, so they never
+  // needed this). A CLI is a fresh process per invocation, so it opts in by
+  // passing a storePath, the same JSON-file pattern LocalReceiptStore
+  // already uses for settled receipts.
+  constructor(private config: ScripConfig, private ramp: RampGateway, private storePath?: string) {
+    if (this.storePath && fs.existsSync(this.storePath)) {
+      this.load();
+    }
+  }
+
+  private load(): void {
+    const data: PersistedLeaseState = JSON.parse(fs.readFileSync(this.storePath!, 'utf-8'));
+    this.authorizations = new Map(data.authorizations.map((a) => [a.authorizationId, a]));
+    this.leases = new Map(
+      data.leases.map((l) => [l.leaseId, { ...l, credentialHash: Buffer.from(l.credentialHash, 'base64') }])
+    );
+    this.reservations = new Map(data.reservations.map((r) => [r.reservationId, r]));
+    this.usage = new Map(Object.entries(data.usage));
+  }
+
+  private persist(): void {
+    if (!this.storePath) return;
+    const data: PersistedLeaseState = {
+      authorizations: [...this.authorizations.values()],
+      leases: [...this.leases.values()].map((l) => ({ ...l, credentialHash: l.credentialHash.toString('base64') })),
+      reservations: [...this.reservations.values()],
+      usage: Object.fromEntries(this.usage),
+    };
+    fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
+    fs.writeFileSync(this.storePath, JSON.stringify(data, null, 2) + '\n');
+  }
 
   private budget(name: string): RampBudgetConfig {
     const budget = this.config.budgets[name];
@@ -176,6 +218,7 @@ export class TaskAuthorizationManager {
     this.authorizations.set(authorization.authorizationId, authorization);
     this.leases.set(lease.leaseId, lease);
     this.usage.set(authorization.authorizationId, []);
+    this.persist();
     return { authorization: { ...authorization }, lease: this.publicLease(lease), credential };
   }
 
@@ -230,6 +273,7 @@ export class TaskAuthorizationManager {
       credentialHash: hashCredential(credential),
     };
     this.leases.set(lease.leaseId, lease);
+    this.persist();
     return { lease: this.publicLease(lease), credential };
   }
 
@@ -257,6 +301,7 @@ export class TaskAuthorizationManager {
     lease.pending += maximumCost;
     authorization.pending += maximumCost;
     this.reservations.set(reservation.reservationId, reservation);
+    this.persist();
     return reservation;
   }
 
@@ -282,6 +327,7 @@ export class TaskAuthorizationManager {
       outputTokens: tokenUsage?.outputTokens,
     });
     this.reservations.delete(reservationId);
+    this.persist();
   }
 
   cancelAction(reservationId: string): void {
@@ -291,6 +337,7 @@ export class TaskAuthorizationManager {
     lease.pending -= reservation.maximumCost;
     authorization.pending -= reservation.maximumCost;
     this.reservations.delete(reservationId);
+    this.persist();
   }
 
   /** Thin wrapper over reserveAction: adds the inference-specific allowedModels check. */
@@ -347,6 +394,7 @@ export class TaskAuthorizationManager {
       outcomeEvidence: outcome?.evidence,
     };
     await this.ramp.reportTaskUsage(receipt);
+    this.persist();
     return receipt;
   }
 
@@ -378,6 +426,7 @@ export class TaskAuthorizationManager {
     const authorization = this.getActiveAuthorization(lease.authorizationId);
     lease.allowance += amount;
     authorization.allowance += amount;
+    this.persist();
   }
 
   getAuthorization(authorizationId: string): TaskAuthorization {
@@ -438,6 +487,7 @@ export class TaskAuthorizationManager {
     [...this.leases.values()]
       .filter((lease) => lease.authorizationId === authorizationId)
       .forEach((lease) => (lease.status = 'revoked'));
+    this.persist();
   }
 
   private authenticate(credential: string): InternalLease {

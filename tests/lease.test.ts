@@ -211,4 +211,41 @@ describe('TaskAuthorizationManager', () => {
     expect(receipt.modelUsage).toHaveLength(1);
     expect(receipt.modelUsage[0].model).toBe('claude-sonnet-5');
   });
+
+  it('persists authorizations and leases across separate manager instances pointed at the same store file', async () => {
+    const storePath = path.join(tmpDir, 'leases.json');
+    const managerA = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const issued = await managerA.authorizeTask({
+      budget: 'research',
+      taskId: 'task-1',
+      task: 'Review a repository',
+      allowance: 2,
+    });
+
+    // A fresh instance, simulating a new CLI process, pointed at the same file.
+    const managerB = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const authorization = managerB.getAuthorization(issued.authorization.authorizationId);
+    expect(authorization.allowance).toBe(2);
+    expect(authorization.status).toBe('active');
+
+    const receipt = await managerB.settleTask(issued.authorization.authorizationId, { status: 'success' });
+    expect(receipt.authorized).toBe(2);
+    expect(receipt.actual).toBe(0);
+
+    // A third instance sees the settlement too.
+    const managerC = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    expect(managerC.getAuthorization(issued.authorization.authorizationId).status).toBe('settled');
+  });
+
+  it('does not persist anything when no storePath is given, matching prior in-memory-only behavior', async () => {
+    const noStoreManager = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp);
+    const issued = await noStoreManager.authorizeTask({
+      budget: 'research',
+      taskId: 'task-1',
+      task: 'Review a repository',
+      allowance: 2,
+    });
+    expect(fs.readdirSync(tmpDir)).toEqual(['ramp.json']);
+    expect(issued.authorization.status).toBe('active');
+  });
 });
