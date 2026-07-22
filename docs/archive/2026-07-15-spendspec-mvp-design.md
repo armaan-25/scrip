@@ -1,5 +1,10 @@
 # SpecSpend Task Credential Design
 
+> Archived design. This document describes an obsolete product direction
+> and is not the current architecture. It also predates the "Scrip" name -
+> "SpecSpend"/"SpendSpec" were earlier working names for this project. See
+> ARCHITECTURE.md and docs/PIVOT_AUDIT.md for the current system.
+
 ## Product boundary
 
 SpecSpend converts one Ramp budget into one temporary, enforceable AI-task

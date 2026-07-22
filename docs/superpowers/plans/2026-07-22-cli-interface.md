@@ -1,5 +1,8 @@
 # CLI Interface Implementation Plan
 
+> **Still describes the current CLI as of this pivot** - see the note in
+> `docs/superpowers/specs/2026-07-22-cli-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a `scrip` CLI that lets a human operator run the existing task lifecycle (status, authorize, delegate, settle, revoke) from a terminal, as a thin third surface over `src/handlers.ts` alongside the MCP server and demo scripts.

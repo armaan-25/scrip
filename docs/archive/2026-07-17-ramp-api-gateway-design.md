@@ -1,5 +1,10 @@
 # Production RampGateway Adapter Design
 
+> Archived design. This document describes an obsolete product direction
+> and is not the current architecture. What it describes as "designed but
+> not yet implemented" has since been built and live-verified - see
+> docs/ramp-api-notes.md and ARCHITECTURE.md for current, accurate state.
+
 > **Amendments since this was written** (kept here rather than silently
 > rewritten, so the design record stays honest about what was believed at
 > the time):

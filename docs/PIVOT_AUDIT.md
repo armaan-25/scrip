@@ -5,6 +5,20 @@
 > baseline, classification, proposed sequence. **No production code has
 > been touched.** Everything below is a proposal awaiting review.
 
+> **Post-Phase-0 correction (during Phase 1):** §3 originally classified
+> `docs/superpowers/specs/2026-07-22-cli-design.md`,
+> `docs/superpowers/plans/2026-07-22-cli-interface.md`, and
+> `docs/superpowers/specs/2026-07-22-cli-styling-design.md` as **ARCHIVE**,
+> reasoning that the pivot's task/action-oriented CLI shape supersedes
+> them. That reshape was never actually implemented (Phase 2 prioritized
+> the domain rename, outcome verification, and the flagship demo instead -
+> see the migration log below). Archiving those docs before their
+> replacement existed would have left the real, current, working CLI
+> without accurate documentation. They were moved to `docs/archive/`
+> and then moved back, with a corrected in-doc note ("still the current
+> CLI") instead of an "obsolete" claim that wasn't true yet. If the CLI
+> reshape is done later, archive them then, not before.
+
 ## 1. Baseline status (verified, not asserted)
 
 Run just now, on `main`, clean working tree, HEAD `d238f40`:

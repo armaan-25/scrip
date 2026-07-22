@@ -1,5 +1,11 @@
 # CLI Styling Design
 
+> **Not yet implemented against the current CLI** - this design was
+> approved but not built before the execution-economics pivot began. The
+> chalk/color approach itself is unaffected by the pivot and still
+> applies whenever the CLI (in its current or a reshaped form) gets
+> styled.
+
 ## Goal
 
 Style the `scrip` CLI's terminal output with color (a Ramp-yellow accent

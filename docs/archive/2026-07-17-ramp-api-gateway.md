@@ -1,5 +1,9 @@
 # Production RampGateway Adapter Implementation Plan
 
+> Archived plan. This document describes an obsolete product direction
+> and is not the current architecture. The implementation it plans has
+> since been completed and live-verified - see docs/ramp-api-notes.md.
+
 > **Needs a refresh pass before execution** — written before three
 > corrections landed (see
 > [`docs/superpowers/specs/2026-07-17-ramp-api-gateway-design.md`](../specs/2026-07-17-ramp-api-gateway-design.md)'s

@@ -1,5 +1,11 @@
 # AI Usage Tracking Positioning + Real Usage Write Design
 
+> Archived design. This document describes an obsolete product direction
+> and is not the current architecture - it's positioning research from
+> before the execution-economics pivot. The write path it designed
+> (Meter/`ai-usage/unified`) has since been built and live-verified - see
+> docs/ramp-api-notes.md and ARCHITECTURE.md.
+
 ## Goal
 
 Reposition SpecSpend away from "virtual cards for AI compute" — a framing

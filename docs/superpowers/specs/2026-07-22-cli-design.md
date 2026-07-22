@@ -1,5 +1,12 @@
 # CLI Interface Design
 
+> **Still the current CLI as of this pivot.** The execution-economics
+> pivot (see docs/PIVOT_AUDIT.md) proposes reshaping this into a
+> task/action-oriented command structure (`scrip task authorize`,
+> `scrip action reserve`, etc.), but that reshape has not been
+> implemented - the flat `scrip status/authorize/delegate/settle/revoke`
+> shape this document describes is what actually ships today.
+
 ## Goal
 
 Scrip's task lifecycle (check budget status, authorize a task, delegate a
