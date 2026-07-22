@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import { deriveCapabilityPolicy, deriveResourceLimits, loadConfig } from '../src/config.js';
 
 describe('loadConfig', () => {
   it('loads Ramp budgets and task credential policy', () => {
@@ -35,5 +35,30 @@ describe('loadConfig', () => {
 
   it('throws for a missing file', () => {
     expect(() => loadConfig('does-not-exist.yaml')).toThrow();
+  });
+
+  it('derives ResourceLimits from an existing budget with no new config fields', () => {
+    const config = loadConfig('scrip.yaml');
+    expect(deriveResourceLimits(config.budgets.research)).toEqual({ maxUsd: 10, maxDelegationDepth: 3 });
+  });
+
+  it('derives CapabilityPolicy, including allowedProviders from model pricing', () => {
+    const config = loadConfig('scrip.yaml');
+    const policy = deriveCapabilityPolicy(config.budgets.research);
+    expect(policy.allowedModels).toEqual(['claude-sonnet-5', 'claude-haiku-4-5-20251001']);
+    expect(policy.allowedProviders).toEqual(['anthropic']);
+    expect(policy.requiresApprovalAboveUsd).toBeUndefined();
+  });
+
+  it('derives requiresApprovalAboveUsd only for a request-approval budget', () => {
+    const config = loadConfig('scrip.yaml');
+    const policy = deriveCapabilityPolicy(config.budgets.escalation);
+    expect(policy.requiresApprovalAboveUsd).toBe(config.budgets.escalation.maxTaskAllowance);
+  });
+
+  it('derives allowedProviders across both providers for the cross-provider demo budget', () => {
+    const config = loadConfig('scrip.yaml');
+    const policy = deriveCapabilityPolicy(config.budgets.cross_provider_demo);
+    expect(policy.allowedProviders?.sort()).toEqual(['anthropic', 'openai']);
   });
 });

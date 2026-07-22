@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import yaml from 'js-yaml';
+import { getModelPrice } from './pricing.js';
 
 export type LimitBehavior = 'degrade' | 'request-approval' | 'deny';
 
@@ -23,6 +24,58 @@ export interface ScripConfig {
   team: string;
   rampEntityId: string;
   budgets: Record<string, RampBudgetConfig>;
+}
+
+/**
+ * The pivot's resource envelope. `scrip.yaml` has no independent fields for
+ * these yet (no max_tokens/max_requests/max_concurrency/max_subagents/
+ * max_wall_clock_seconds key exists in the schema below) - deriveResourceLimits()
+ * is a *view* over the RampBudgetConfig fields that already carry this
+ * meaning, not a new stored config, so it's always correct and never
+ * silently stale. Fields with no current equivalent are honestly undefined
+ * rather than a fabricated default.
+ */
+export interface ResourceLimits {
+  maxUsd: number;
+  maxTokens?: number;
+  maxRequests?: number;
+  maxConcurrency?: number;
+  maxSubagents?: number;
+  maxDelegationDepth: number;
+  maxWallClockSeconds?: number;
+}
+
+/**
+ * The pivot's capability envelope, same derivation approach as
+ * ResourceLimits: a view over existing RampBudgetConfig fields, not new
+ * config. `allowedProviders` is derived from `allowedModels` via
+ * getModelPrice().provider (see deriveCapabilityPolicy in this file);
+ * `allowedTools`/`allowedActionTypes` have no config source yet - Scrip has
+ * no per-budget tool or action-type allowlist today - and stay undefined
+ * rather than claiming a policy that isn't actually enforced anywhere.
+ */
+export interface CapabilityPolicy {
+  allowedModels: string[];
+  allowedProviders?: string[];
+  allowedTools?: string[];
+  allowedActionTypes?: string[];
+  requiresApprovalAboveUsd?: number;
+}
+
+export function deriveResourceLimits(budget: RampBudgetConfig): ResourceLimits {
+  return {
+    maxUsd: budget.maxTaskAllowance,
+    maxDelegationDepth: budget.maxDelegationDepth,
+  };
+}
+
+export function deriveCapabilityPolicy(budget: RampBudgetConfig): CapabilityPolicy {
+  const allowedProviders = [...new Set(budget.allowedModels.map((model) => getModelPrice(model).provider))];
+  return {
+    allowedModels: budget.allowedModels,
+    allowedProviders,
+    requiresApprovalAboveUsd: budget.onLimit === 'request-approval' ? budget.maxTaskAllowance : undefined,
+  };
 }
 
 interface RawBudget {
