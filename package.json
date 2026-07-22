@@ -1,6 +1,7 @@
 {
   "name": "scrip",
   "version": "0.2.0",
+  "description": "Scrip authorizes, meters, and settles autonomous work: a task execution contract that reserves spend before it happens, delegates bounded authority to concurrent workers, and settles against a verified outcome.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +9,8 @@
     "test": "vitest run",
     "mcp-server": "tsx bin/mcp-server.ts",
     "cli": "tsx bin/cli.ts",
-    "demo": "tsx demo/run-demo.ts"
+    "demo": "tsx demo/run-demo.ts",
+    "demo:flagship": "tsx scripts/demo-flagship.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

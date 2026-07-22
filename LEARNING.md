@@ -38,6 +38,28 @@
   `outcome`/`outcomeEvidence` pair — a receipt should be able to answer
   "did the work this money paid for actually succeed," not just "was the
   spend authorized."
+- Deterministic evidence beats self-reported success. `ApprovalController`
+  judges *mid-task continuation* from a structured snapshot; `OutcomeVerifier`
+  judges a *finished* outcome from external, non-self-reported state (a
+  merged PR, passing CI). They look similar (both avoid asking a model to
+  grade its own work) but answer different questions - worth keeping the
+  distinction explicit rather than merging them into one "AI judges
+  itself" concept with two call sites.
+- A big rename across a real, tested codebase is safer staged as
+  types-then-fields than done in one pass. Type-name aliases
+  (`export type TaskExecution = TaskAuthorization`) let new code and docs
+  use new vocabulary immediately, with zero risk to the ~100 existing
+  tests that assert on old field names - the mechanical, whole-repo
+  field-level rename (`allowance`→`authorizedUsd`) is real work, staged
+  separately, not skipped.
+- Don't archive a document before its replacement exists. Mid-pivot, 3 CLI
+  design docs got moved to `docs/archive/` because a *future* CLI reshape
+  would supersede them - except that reshape was never actually built in
+  the same pass, so the docs describing the real, current, working CLI
+  would have been the only ones marked "obsolete." Caught by rereading the
+  archived files' own claims against what the code actually does, not by
+  assuming the classification made in a Phase-0 audit was still correct
+  by the time Phase 1 executed it days (or, here, minutes) later.
 
 ## Verifying claims against primary sources, not memory
 
@@ -53,16 +75,20 @@ plausible guess.
 
 ## Package responsibilities
 
-- `@anthropic-ai/sdk` performs the provider request and returns token usage.
+- `@anthropic-ai/sdk` and `openai` each perform their own provider's
+  request and return token usage; `ModelProvider` is the interface that
+  keeps `ScripClient`/`ApprovalController` from importing either directly.
 - `js-yaml` loads human-readable Ramp budget mappings from `scrip.yaml`.
 - `@modelcontextprotocol/sdk` and `zod` power the optional MCP adapter and
   its input validation. Neither owns policy or persistence.
 - Vitest exercises the lifecycle without making billed API calls; where a
   scenario needs to be seen rather than just asserted on,
-  `scripts/demo-scenario.ts` reproduces it against the real enforcement
-  code with a fake Anthropic client — deterministic, free, and honest about
-  which parts are real (the reservation math) versus stubbed (the model
-  response).
+  `scripts/demo-flagship.ts` reproduces it against the real enforcement
+  code with fake provider/GitHub clients — deterministic, free, and honest
+  about which parts are real (every reservation/commit/release call) versus
+  stubbed (model and GitHub responses).
 
-No new package was added for this pivot; Node's standard `crypto` module is
+No new package was added for the execution-economics pivot's first slice
+(`OutcomeVerifier`/`GithubPrOutcomeVerifier` use the built-in `fetch`, same
+DI pattern as `RampOAuthClient`); Node's standard `crypto` module remains
 sufficient for opaque credential generation and hashing.

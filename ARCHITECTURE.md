@@ -1,15 +1,26 @@
 # Scrip Architecture
 
+> **Mid-pivot.** This repo is moving from an inference-budget prototype
+> toward a broader execution-economics platform for autonomous work. The
+> domain mechanism described below (atomic reserve/commit/cancel over any
+> action type, not just inference) was already generalized before the
+> pivot began — see `docs/PIVOT_AUDIT.md` for the full classification of
+> what's built, what's a rename-in-progress, and what's genuinely new
+> (durable Postgres persistence, a hosted HTTP API, a task/action-oriented
+> CLI reshape — none of those three exist yet).
+
 ## What this is
 
-Scrip is a pre-call spend-enforcement system for AI agent tasks. It sits
-between an agent (or a fleet of delegated subagents) and the real model
-provider (Anthropic, OpenAI), authorizing and reserving spend *before*
-any provider call happens, then settles and reports real usage to Ramp
-afterward. It is not a dashboard, not an after-the-fact usage tracker,
-and not a per-purchase card product — see "Why this exists between three
-things Ramp already ships" below for how it differs from what Ramp
-itself ships today.
+Scrip authorizes, meters, and settles autonomous work. The core unit is a
+task, not an inference request: one job that may spawn concurrent
+workers, call multiple model providers, hit paid APIs, and needs its full
+economics settled against a verified outcome. It sits between an agent
+(or a fleet of delegated subagents) and whatever it spends money on —
+authorizing and reserving spend *before* execution, then settling and
+reporting real usage to Ramp afterward. It is not a dashboard, not an
+after-the-fact usage tracker, and not a per-purchase card product — see
+"Why this exists between three things Ramp already ships" below for how
+it differs from what Ramp itself ships today.
 
 Stack: TypeScript/Node, ESM (`"type": "module"`), Vitest, `js-yaml` for
 config, real `@anthropic-ai/sdk` and `openai` SDKs, `@modelcontextprotocol/sdk`
@@ -53,16 +64,28 @@ telemetry pipe.
   delegation tree (the root task itself is `depth: 0`, `agentId: 'root'`).
   Each child lease tracks its own `depth`, `parentLeaseId`, and its own
   `allowance`/`spent`/`pending`, independent of its parent's.
-- **`ActionReservation`** — an atomic reserve/commit/cancel unit. This is
-  the generic primitive: `reserveAction(credential, actionType, label,
-  maximumCost)` → `commitAction(reservationId, actualCost, tokenUsage?)`
+- **`ActionReservation`** (aliased `EconomicAction`) — an atomic
+  reserve/commit/cancel unit with a real status lifecycle
+  (`'reserved'|'committed'|'cancelled'`, actually transitioned by
+  `commitAction`/`cancelAction`, not just declared). The generic
+  primitive: `reserveAction(credential, actionType, label, maximumCost,
+  metadata?)` → `commitAction(reservationId, actualCost, tokenUsage?)`
   or `cancelAction(reservationId)`. `actionType` is `'inference' |
-  'paid_api' | 'purchase' | 'other'` — the same atomicity guarantees that
-  gate a real Anthropic/OpenAI call also gate an unrelated paid API call
-  or purchase, with no new infrastructure. `reserveRequest`/`commitRequest`/
+  'paid_api' | 'purchase' | 'cloud_compute' | 'human_approval' | 'other'`
+  (the last two declared for forward compatibility, not yet exercised by
+  any real caller) — the same atomicity guarantees that gate a real
+  Anthropic/OpenAI call also gate an unrelated paid API call or purchase,
+  with no new infrastructure. `reserveRequest`/`commitRequest`/
   `cancelRequest` are thin inference-specific wrappers over this (they add
   the `allowedModels` check) — kept for existing callers, zero behavior
-  change.
+  change. `scripts/demo-flagship.ts` exercises `paid_api` directly.
+- **Domain vocabulary aliases** — `TaskExecution`/`ExecutionLease`/
+  `EconomicAction`/`FinanceControlPlane` are exported type aliases over
+  `TaskAuthorization`/`InferenceLease`/`ActionReservation`/`RampGateway`,
+  toward the pivot's newer nouns. Field names (`allowance`/`spent`/
+  `pending`) are unchanged so far — a full field-level rename
+  (`allowance`→`authorizedUsd` etc.) is real, mechanical, whole-repo-touching
+  work staged separately; see `docs/PIVOT_AUDIT.md` §8.4.
 - **Bearer credentials** — opaque `scrip_<random>` strings, SHA-256
   hashed at rest, compared with `timingSafeEqual`. A caller never sees
   another lease's credential; `authenticate()` is the only place a raw
@@ -186,6 +209,35 @@ present, else `MockRampGateway`.
 Full confirmed request/response shapes, real Fund IDs in the sandbox, and
 every live-verified gotcha are in `docs/ramp-api-notes.md`.
 
+Ramp remains the system of record for company money, spend policy, agent
+identities, cards, and provider-spend visibility. Scrip owns task
+identity, worker hierarchy, atomic reservations, attenuated delegation,
+active-task revocation, and outcome-backed settlement — it integrates
+through the `RampGateway`/`FinanceControlPlane` boundary rather than
+recreating any of what Ramp already owns.
+
+### Outcome verification
+
+`src/outcome-verifier.ts` defines `OutcomeVerifier<Request>` —
+`{ type: string; verify(request): Promise<OutcomeEvidence> }` —
+provider-neutral, for attaching *deterministic* evidence to a settlement
+rather than asking a model to declare success from its own narrative.
+`src/verifiers/github-pr-verifier.ts`'s `GithubPrOutcomeVerifier` checks
+real GitHub state: `GET /repos/{owner}/{repo}/pulls/{pull_number}` for
+merged status and base branch, `GET /repos/{owner}/{repo}/commits/{ref}/check-runs`
+for named CI checks' `status`/`conclusion` — endpoint paths and field
+names confirmed against GitHub's current REST docs. Unit-tested with a
+fake `fetch` only (no `GITHUB_TOKEN` configured in this environment, so
+not yet live-verified against a real repository — same honesty standard
+as everything else marked "not yet live-verified" in this document).
+
+Deliberately distinct from `ApprovalController`: that judges *mid-task
+continuation* from the worker's own progress snapshot; this verifies a
+*finished outcome* from external, non-self-reported state.
+`TaskReceipt.evidenceDetail?: OutcomeEvidence[]` carries this onto the
+receipt via `settleTask()`'s optional third argument, set before the
+receipt is reported (not mutated on afterward).
+
 ### Interfaces
 
 Three thin surfaces over the same core, none of them containing business
@@ -256,21 +308,33 @@ Caller selects budget + task allowance
 
 Dependency injection everywhere a real external system is involved: fake
 HTTP/SDK clients matching the real SDKs' shapes for Anthropic, OpenAI,
-and Ramp's OAuth/Funds/AI-Usage-Tracking endpoints. No test calls a real
-external API. Real-API verification instead happens via standalone
-`scripts/smoke-test-*.ts` scripts, run manually with real credentials in
-`.env`, and by literally running the demos (`demo/run-demo.ts`,
-`scripts/demo-*.ts`) against the real sandbox — both approaches have
-caught real bugs unit tests with fakes couldn't (a double Fund-ID
-resolution bug, a required-but-undocumented `usage.meters` field).
+Ramp's OAuth/Funds/AI-Usage-Tracking endpoints, and GitHub's REST API. No
+test calls a real external API. Real-API verification instead happens via
+standalone `scripts/smoke-test-*.ts` scripts, run manually with real
+credentials in `.env`, and by literally running the demos
+(`demo/run-demo.ts`, `scripts/demo-flagship.ts`) against the real
+sandbox — both approaches have caught real bugs unit tests with fakes
+couldn't (a double Fund-ID resolution bug, a required-but-undocumented
+`usage.meters` field, and a demo budget that didn't actually allow the
+model it tried to route to).
 
 ## Known gaps / deliberately out of scope
 
+Per the pivot instruction's own principle — don't claim unbuilt
+functionality — these are genuinely not built, not "designed but
+basically done":
+
 - **Persistence beyond the CLI's opt-in JSON file** — no transactional
-  store, no idempotency keys, no expiry cleanup daemon. The MCP server
-  and demo scripts are still purely in-memory per process.
+  store, no idempotency keys, no expiry cleanup daemon, no Postgres
+  adapter. The MCP server and demo scripts are still purely in-memory per
+  process. Two independent processes reserving against the same task
+  would race today; nothing in this repo prevents that except the CLI's
+  single-JSON-file serialization, which is not a concurrency-safe store.
 - **No hosted HTTP gateway** — everything here runs as a library/CLI/MCP
   server a caller embeds or runs locally, not a multi-tenant service.
+- **No task/action-oriented CLI reshape** — the CLI is still
+  `scrip status|authorize|delegate|settle|revoke`, not `scrip task
+  authorize`/`scrip action reserve`/etc.
 - **No Agent Card purchase flow / `TaskCostEstimator`** — scoped out
   earlier as a separate, larger surface (real-time per-purchase spend,
   not metered inference).
@@ -280,3 +344,8 @@ resolution bug, a required-but-undocumented `usage.meters` field).
   Anthropic and OpenAI are implemented.
 - **No streaming, no cross-provider failover** (only within-provider
   degrade-to-fallback exists).
+- **`GithubPrOutcomeVerifier` is the only `OutcomeVerifier`** — no other
+  verifier type exists.
+
+See `docs/PIVOT_AUDIT.md` for the full classification and proposed
+sequence for closing these.
