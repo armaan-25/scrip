@@ -3,7 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
-import type { ActionType, ActionUsage, ModelUsage, RampGateway, TaskOutcomeStatus, TaskReceipt } from './store.js';
+import {
+  computeCostBreakdown,
+  type ActionType,
+  type ActionUsage,
+  type ModelUsage,
+  type RampGateway,
+  type TaskOutcomeStatus,
+  type TaskReceipt,
+} from './store.js';
 
 export type AuthorizationStatus = 'active' | 'settled' | 'revoked';
 export type LeaseStatus = 'active' | 'settled' | 'revoked';
@@ -41,6 +49,17 @@ export interface IssuedTaskAuthorization {
   credential: string;
 }
 
+/**
+ * Aliases toward the pivot's domain vocabulary (TaskExecution/ExecutionLease
+ * replacing TaskAuthorization/InferenceLease as the product's primary
+ * nouns). Field names (allowance/spent/pending) are unchanged for now - see
+ * docs/PIVOT_AUDIT.md §8.4 on why a full field-level rename is staged
+ * separately from the type-name rename, rather than done in the same pass.
+ */
+export type TaskExecution = TaskAuthorization;
+export type IssuedTaskExecution = IssuedTaskAuthorization;
+export type ExecutionLease = InferenceLease;
+
 export interface IssuedChildLease {
   lease: InferenceLease;
   credential: string;
@@ -58,14 +77,30 @@ export interface TaskEvidenceSnapshot {
   requestedShortfall: number;
 }
 
+export type EconomicActionStatus = 'reserved' | 'committed' | 'cancelled';
+
 export interface ActionReservation {
   reservationId: string;
+  /** = reservationId. The pivot's canonical field name; both resolve the same reservation. */
+  actionId: string;
   authorizationId: string;
   leaseId: string;
   actionType: ActionType;
   label: string;
   maximumCost: number;
+  /** = maximumCost. The pivot's canonical field name for the same value. */
+  estimatedCostUsd: number;
+  status: EconomicActionStatus;
+  /**
+   * Free-form per-action detail (e.g. a purchase's vendor, a compute job's
+   * region). Always an object, never undefined, so callers never need an
+   * existence check before reading a key off it.
+   */
+  metadata: Record<string, unknown>;
 }
+
+/** Alias toward the pivot's domain vocabulary - EconomicAction is exactly this shape already. */
+export type EconomicAction = ActionReservation;
 
 /** Preserved name for callers already importing RequestReservation (e.g. src/proxy.ts). */
 export type RequestReservation = ActionReservation;
@@ -278,7 +313,13 @@ export class TaskAuthorizationManager {
   }
 
   /** The generic primitive: atomic reserve/commit/cancel over any resource type, not just inference. */
-  reserveAction(credential: string, actionType: ActionType, label: string, maximumCost: number): ActionReservation {
+  reserveAction(
+    credential: string,
+    actionType: ActionType,
+    label: string,
+    maximumCost: number,
+    metadata: Record<string, unknown> = {}
+  ): ActionReservation {
     const lease = this.authenticate(credential);
     const authorization = this.getActiveAuthorization(lease.authorizationId);
     this.assertNotExpired(lease, authorization);
@@ -290,13 +331,18 @@ export class TaskAuthorizationManager {
       );
     }
 
+    const actionId = randomUUID();
     const reservation: ActionReservation = {
-      reservationId: randomUUID(),
+      reservationId: actionId,
+      actionId,
       authorizationId: authorization.authorizationId,
       leaseId: lease.leaseId,
       actionType,
       label,
       maximumCost,
+      estimatedCostUsd: maximumCost,
+      status: 'reserved',
+      metadata,
     };
     lease.pending += maximumCost;
     authorization.pending += maximumCost;
@@ -319,6 +365,7 @@ export class TaskAuthorizationManager {
     authorization.pending -= reservation.maximumCost;
     lease.spent += actualCost;
     authorization.spent += actualCost;
+    reservation.status = 'committed';
     this.usage.get(authorization.authorizationId)!.push({
       actionType: reservation.actionType,
       label: reservation.label,
@@ -336,6 +383,7 @@ export class TaskAuthorizationManager {
     const authorization = this.authorizations.get(reservation.authorizationId)!;
     lease.pending -= reservation.maximumCost;
     authorization.pending -= reservation.maximumCost;
+    reservation.status = 'cancelled';
     this.reservations.delete(reservationId);
     this.persist();
   }
@@ -384,9 +432,12 @@ export class TaskAuthorizationManager {
       actual: authorization.spent,
       returned: authorization.allowance - authorization.spent,
       childAgents: leases.filter((lease) => lease.parentLeaseId).length,
+      workerCount: leases.filter((lease) => lease.parentLeaseId).length,
       requestCount: events.length,
+      actionCount: events.length,
       modelUsage,
       actionUsage,
+      costs: computeCostBreakdown(actionUsage),
       costCenter: budget.costCenter,
       startedAt: authorization.createdAt,
       settledAt: new Date().toISOString(),

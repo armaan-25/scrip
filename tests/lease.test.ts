@@ -212,6 +212,45 @@ describe('TaskAuthorizationManager', () => {
     expect(receipt.modelUsage[0].model).toBe('claude-sonnet-5');
   });
 
+  it('computes the receipt cost breakdown, workerCount, and actionCount alongside the legacy fields', async () => {
+    const root = await authorize(2);
+    manager.delegate(root.credential, 'child-1', 0.5);
+    const inferenceRequest = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    manager.commitRequest(inferenceRequest.reservationId, 100, 50, 0.2);
+    const apiAction = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.05);
+    manager.commitAction(apiAction.reservationId, 0.02);
+
+    const receipt = await manager.settleTask(root.authorization.authorizationId);
+    expect(receipt.workerCount).toBe(receipt.childAgents);
+    expect(receipt.workerCount).toBe(1);
+    expect(receipt.actionCount).toBe(receipt.requestCount);
+    expect(receipt.actionCount).toBe(2);
+    expect(receipt.costs).toEqual({
+      inferenceUsd: 0.2,
+      paidApiUsd: 0.02,
+      cloudComputeUsd: 0,
+      purchasesUsd: 0,
+      approvalOverheadUsd: 0,
+      otherUsd: 0,
+    });
+  });
+
+  it('tracks an EconomicAction reservation through reserved -> committed and reserved -> cancelled', async () => {
+    const root = await authorize(1);
+    const committed = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.1, { vendor: 'exa' });
+    expect(committed.status).toBe('reserved');
+    expect(committed.actionId).toBe(committed.reservationId);
+    expect(committed.estimatedCostUsd).toBe(0.1);
+    expect(committed.metadata).toEqual({ vendor: 'exa' });
+    manager.commitAction(committed.reservationId, 0.07);
+    expect(committed.status).toBe('committed');
+
+    const cancelled = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.1);
+    expect(cancelled.metadata).toEqual({});
+    manager.cancelAction(cancelled.reservationId);
+    expect(cancelled.status).toBe('cancelled');
+  });
+
   it('persists authorizations and leases across separate manager instances pointed at the same store file', async () => {
     const storePath = path.join(tmpDir, 'leases.json');
     const managerA = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
