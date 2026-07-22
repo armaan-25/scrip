@@ -372,4 +372,62 @@ actual logic doesn't change, only which interface they implement.
 Per the brief's own instruction: no production code edited, no docs
 archived yet (only proposed above), no CLI commands changed, no
 `BudgetRouter` decision made, no domain types renamed. This document is
-the complete Phase 0 deliverable. Waiting for review before Phase 1.
+the complete Phase 0 deliverable.
+
+## 10. Migration log — what actually happened after Phase 0 review
+
+Given explicit go-ahead to run autonomously ("run until you can no
+longer run, implement as much as you can"), work proceeded past Phase 0
+through the following, each its own commit with 93→104 tests green
+throughout and a clean build after every step:
+
+- **Domain vocabulary (Phase 2, partial):** `TaskExecution`/
+  `ExecutionLease`/`EconomicAction`/`FinanceControlPlane` type aliases
+  added over the existing types. `ActionReservation`/`EconomicAction`
+  extended with a real `status` lifecycle (`reserved`→`committed`/
+  `cancelled`, actually transitioned by `commitAction`/`cancelAction`),
+  `actionId`, `estimatedCostUsd`, and `metadata`. `TaskReceipt` extended
+  with `workerCount`/`actionCount` (aliasing the now-deprecated
+  `childAgents`/`requestCount`), a `costs` breakdown computed from
+  `actionUsage`, and an optional `evidenceDetail: OutcomeEvidence[]`.
+  `ResourceLimits`/`CapabilityPolicy` added to `src/config.ts` as pure
+  *derived views* over existing `RampBudgetConfig` fields — no new
+  `scrip.yaml` schema, so nothing can silently drift stale.
+  **Not done:** the mechanical field-level rename
+  (`allowance`→`authorizedUsd` etc.) — staged separately per §8.4, on
+  purpose, not an oversight.
+- **Outcome verification (Phase 5, first slice):** `OutcomeVerifier`
+  interface and a real `GithubPrOutcomeVerifier` (endpoint paths and
+  response field names confirmed against GitHub's current REST docs,
+  not guessed). Unit-tested with a fake `fetch`; not live-verified (no
+  `GITHUB_TOKEN` in this environment).
+- **Flagship demo (Phase 6):** `scripts/demo-flagship.ts` added, proving
+  the full loop in one deterministic run - concurrent workers, one
+  denied by the atomic reservation math, cross-provider dispatch, a
+  non-inference paid action, released capacity, real (fake-fetch)
+  outcome verification, one settled receipt. `demo-scenario.ts`,
+  `demo-generic-action.ts`, and `demo-cross-provider.ts` deleted as
+  redundant with it (git history preserves them). Running it live caught
+  a real bug: it initially used the `research` budget, which doesn't
+  allow the OpenAI model it tried to route to - switched to
+  `cross_provider_demo`, which exists for exactly this.
+- **Docs (Phase 1):** README fully rewritten with the approved
+  positioning and an explicit built/tested-live-verified vs.
+  built/tested-not-live-verified vs. designed-not-built status section.
+  `ARCHITECTURE.md` and `LEARNING.md` updated in place (not replaced).
+  5 of the 8 originally-proposed docs archived to `docs/archive/`
+  (SpendSpec-era design/plan, pre-implementation RampGateway
+  design/plan, AI-usage-tracking positioning). The other 3 (CLI
+  design/plan/styling) were archived and then **un**-archived - see the
+  correction note at the top of this document - because the CLI reshape
+  they'd be superseded by was never actually built in this pass.
+
+**Explicitly not started:** Phase 3 (Postgres/durable persistence),
+Phase 4 (hosted HTTP API), the CLI's task/action command reshape, the
+full `src/domain/application/infrastructure/interfaces` directory
+restructure, and the `BudgetRouter` decision (still genuinely open, see
+§8.2 - recommendation stands: keep it, don't market it). Each is
+substantial, independently-scoped new-subsystem work; stopping here
+rather than starting one of them half-finished, given everything above
+was carried through to fully tested, green, honestly-documented
+completion instead.
