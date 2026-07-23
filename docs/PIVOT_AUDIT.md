@@ -422,12 +422,43 @@ throughout and a clean build after every step:
   correction note at the top of this document - because the CLI reshape
   they'd be superseded by was never actually built in this pass.
 
-**Explicitly not started:** Phase 3 (Postgres/durable persistence),
-Phase 4 (hosted HTTP API), the CLI's task/action command reshape, the
-full `src/domain/application/infrastructure/interfaces` directory
-restructure, and the `BudgetRouter` decision (still genuinely open, see
-§8.2 - recommendation stands: keep it, don't market it). Each is
-substantial, independently-scoped new-subsystem work; stopping here
-rather than starting one of them half-finished, given everything above
-was carried through to fully tested, green, honestly-documented
-completion instead.
+**Explicitly not started (as of the first stopping point):** Phase 3
+(Postgres/durable persistence), Phase 4 (hosted HTTP API), the CLI's
+task/action command reshape, the full
+`src/domain/application/infrastructure/interfaces` directory
+restructure, and the `BudgetRouter` decision. Stopped there rather than
+starting one of them half-finished.
+
+## 11. Migration log, continued — BudgetRouter decision + CLI reshape
+
+Given explicit direction to close the remaining open items rather than
+start Postgres/HTTP API, two more commits landed, tests green
+(104→121) throughout:
+
+- **`BudgetRouter` decision closed:** kept as-is (§8.2's recommendation),
+  documented directly in `src/router.ts` rather than left as an
+  open question - inspecting its real dependents found no
+  product-marketing framing anywhere in committed docs calling it a
+  differentiator, so the pivot's concern applies to future copy, not to
+  deleting working code.
+- **CLI reshape done:** `scrip <noun> <verb> ...` replaces the flat
+  command list - `budget status`; `task
+  authorize|delegate|show|tree|settle|revoke`; `action
+  reserve|commit|cancel`; `receipt show|export`. Two new backing
+  read capabilities were needed and added first, each with its own
+  tests, before the CLI could be built on them:
+  `TaskAuthorizationManager.getLeaseTree()` (every lease under a task,
+  for `task tree`) and `RampGateway.getReceipt()` (a previously-settled
+  receipt by `authorizationId`, implemented against the local write in
+  both `MockRampGateway` and `RampApiGateway`, for `receipt
+  show`/`receipt export`). `handlers.ts` gained thin wrappers
+  (`showTask`, `showTaskTree`, `showReceipt`, `reserveAction`,
+  `commitAction`, `cancelAction`) - no new business logic, same pattern
+  as every other handler. Verified live against real Ramp across
+  separate CLI processes, including both brand-new commands (`task
+  tree`, `receipt show`), not just unit-tested.
+
+**Still explicitly not started:** Phase 3 (Postgres/durable
+persistence), Phase 4 (hosted HTTP API), the full
+`src/domain/application/infrastructure/interfaces` directory
+restructure.

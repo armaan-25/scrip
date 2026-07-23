@@ -59,8 +59,8 @@ tiers:
 **Built, tested, and live-verified against real external services:**
 Ramp OAuth (client-credentials), real Ramp Fund balance reads, real
 broadcast to Ramp's AI Usage Tracking, real Anthropic and OpenAI
-inference dispatch, the CLI's full task lifecycle over separate
-processes, the MCP server over a real protocol round-trip.
+inference dispatch, the CLI's full task/action/receipt lifecycle over
+separate processes, the MCP server over a real protocol round-trip.
 
 **Built and tested, not yet live-verified against a real external
 service:** `GithubPrOutcomeVerifier` (real GitHub REST API shapes,
@@ -69,10 +69,7 @@ confirmed against GitHub's own docs, but only unit-tested against a fake
 
 **Designed but not yet built:** durable transactional persistence beyond
 the CLI's opt-in local JSON file (no Postgres store, no idempotency keys,
-no crash recovery), a hosted HTTP API, a task/action-oriented CLI command
-reshape (the CLI today is still `scrip status|authorize|delegate|settle|revoke`,
-not the `scrip task ...`/`scrip action ...` shape a broader execution
-platform implies — see `docs/PIVOT_AUDIT.md`).
+no crash recovery), a hosted HTTP API — see `docs/PIVOT_AUDIT.md`.
 
 ## Run it
 
@@ -202,13 +199,24 @@ wrapping a real provider client in its own process.
 
 ## Operating from a terminal
 
-`npm run cli -- <command>` exposes the same task lifecycle to a human
-operator: `status <budget>`, `authorize <budget> <taskId> <allowance>
-<description>`, `delegate <credential> <agentId> <allowance>`, `settle
-<authorizationId> [--status ...] [--evidence "..."]`, `revoke
-<authorizationId>`. Each invocation is a separate process; state
-persists to `.scrip/leases.json` (override with `SCRIP_LEASE_STORE`) so
-`authorize` and a later `settle` chain correctly.
+`npm run cli -- <noun> <verb> ...` exposes the same task lifecycle to a
+human operator, organized around the pivot's nouns rather than a flat
+command list:
+
+- `budget status <budget>`
+- `task authorize <budget> <taskId> <allowance> <description>` /
+  `task delegate <credential> <agentId> <allowance>` /
+  `task show <authorizationId>` / `task tree <authorizationId>` /
+  `task settle <authorizationId> [--status ...] [--evidence "..."]` /
+  `task revoke <authorizationId>`
+- `action reserve <credential> <actionType> <label> <maximumCost>` /
+  `action commit <reservationId> <actualCost>` /
+  `action cancel <reservationId>`
+- `receipt show <authorizationId>` / `receipt export <authorizationId> [outputPath]`
+
+Each invocation is a separate process; state persists to
+`.scrip/leases.json` (override with `SCRIP_LEASE_STORE`) so `task
+authorize` and a later `task settle` chain correctly.
 
 ## Real Ramp integration
 

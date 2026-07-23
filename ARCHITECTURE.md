@@ -4,10 +4,10 @@
 > toward a broader execution-economics platform for autonomous work. The
 > domain mechanism described below (atomic reserve/commit/cancel over any
 > action type, not just inference) was already generalized before the
-> pivot began — see `docs/PIVOT_AUDIT.md` for the full classification of
+> pivot began, and the CLI has since been reshaped around task/action/
+> receipt nouns — see `docs/PIVOT_AUDIT.md` for the full classification of
 > what's built, what's a rename-in-progress, and what's genuinely new
-> (durable Postgres persistence, a hosted HTTP API, a task/action-oriented
-> CLI reshape — none of those three exist yet).
+> (durable Postgres persistence and a hosted HTTP API don't exist yet).
 
 ## What this is
 
@@ -256,12 +256,19 @@ logic:
   credential over MCP, but actually spending against it still requires
   code that constructs a `ScripClient` wrapping a real provider client in
   its own process.
-- **`src/cli.ts`** / **`bin/cli.ts`** — `scrip status|authorize|delegate|settle|revoke`
-  for a human operator at a terminal. `src/cli.ts` exports a pure,
-  fully-tested `runCli(runtime, argv): Promise<string>`; `bin/cli.ts` is
-  the thin bootstrap (env loading, `ScripRuntime` construction, printing).
-  This is the surface that needed lease persistence (above) since each
-  invocation is a separate process.
+- **`src/cli.ts`** / **`bin/cli.ts`** — `scrip <noun> <verb> ...` for a
+  human operator at a terminal: `budget status`; `task
+  authorize|delegate|show|tree|settle|revoke`; `action
+  reserve|commit|cancel`; `receipt show|export`. `src/cli.ts` exports a
+  pure, fully-tested `runCli(runtime, argv): Promise<string>`; `bin/cli.ts`
+  is the thin bootstrap (env loading, `ScripRuntime` construction,
+  printing). This is the surface that needed lease persistence (above)
+  since each invocation is a separate process. `task show`/`task tree`
+  read `TaskAuthorizationManager.getAuthorization()`/`getLeaseTree()`
+  directly; `receipt show`/`receipt export` read back through
+  `RampGateway.getReceipt()` (the local write, even against
+  `RampApiGateway` — Ramp's AI Usage Tracking is a one-way broadcast, not
+  a queryable store).
 
 `src/runtime.ts`'s `ScripRuntime` is the composition root all three
 surfaces build on: loads `scrip.yaml` via `src/config.ts`, picks a
@@ -332,9 +339,6 @@ basically done":
   single-JSON-file serialization, which is not a concurrency-safe store.
 - **No hosted HTTP gateway** — everything here runs as a library/CLI/MCP
   server a caller embeds or runs locally, not a multi-tenant service.
-- **No task/action-oriented CLI reshape** — the CLI is still
-  `scrip status|authorize|delegate|settle|revoke`, not `scrip task
-  authorize`/`scrip action reserve`/etc.
 - **No Agent Card purchase flow / `TaskCostEstimator`** — scoped out
   earlier as a separate, larger surface (real-time per-purchase spend,
   not metered inference).
