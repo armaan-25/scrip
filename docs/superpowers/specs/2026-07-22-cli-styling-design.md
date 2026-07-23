@@ -1,10 +1,15 @@
 # CLI Styling Design
 
-> **Not yet implemented against the current CLI** - this design was
-> approved but not built before the execution-economics pivot began. The
-> chalk/color approach itself is unaffected by the pivot and still
-> applies whenever the CLI (in its current or a reshaped form) gets
-> styled.
+> **Implemented**, against the reshaped `scrip <noun> <verb>` CLI - see
+> `bin/cli.ts`. The design below was written against the pre-pivot flat
+> command list, but the styling approach (color only in `bin/cli.ts`,
+> `src/cli.ts` untouched) never depended on which commands exist, so it
+> applied unchanged. Verified with real ANSI codes confirmed present in
+> the output (this sandboxed environment has no `TERM` set, so chalk's
+> color detection reports level 0 by default here - verified instead by
+> forcing `TERM=xterm-256color` and confirming real `\x1b[...m` escape
+> sequences appear around the label text; a real user terminal always has
+> `TERM` set and will render this in color with zero extra steps).
 
 ## Goal
 

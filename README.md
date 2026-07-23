@@ -240,6 +240,12 @@ Each invocation is a separate process; state persists to
 `.scrip/leases.json` (override with `SCRIP_LEASE_STORE`) so `task
 authorize` and a later `task settle` chain correctly.
 
+Output is styled — a `▲ SCRIP` banner and Ramp's real brand accent
+(`#E4F222`) on every field label, via `chalk` in `bin/cli.ts` only (the
+tested `src/cli.ts` core stays plain text; color is a presentation
+concern applied to its output right before printing). Colors follow the
+terminal's own capability detection automatically — no flags needed.
+
 ## Hosted HTTP API
 
 ```bash
