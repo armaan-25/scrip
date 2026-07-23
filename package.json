@@ -10,17 +10,20 @@
     "mcp-server": "tsx bin/mcp-server.ts",
     "cli": "tsx bin/cli.ts",
     "demo": "tsx demo/run-demo.ts",
-    "demo:flagship": "tsx scripts/demo-flagship.ts"
+    "demo:flagship": "tsx scripts/demo-flagship.ts",
+    "http-server": "tsx bin/http-server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@modelcontextprotocol/sdk": "^1.7.0",
+    "express": "^5.2.1",
     "js-yaml": "^4.1.0",
     "openai": "^6.48.0",
     "pg": "^8.22.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.9.0",
     "@types/pg": "^8.20.0",
