@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/src/infrastructure/postgres dist/src/pricing && cp src/infrastructure/postgres/schema.sql dist/src/infrastructure/postgres/schema.sql && cp src/pricing/model_price.json dist/src/pricing/model_price.json",
     "test": "vitest run",
     "mcp-server": "tsx bin/mcp-server.ts",
     "cli": "tsx bin/cli.ts",
