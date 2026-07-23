@@ -1,4 +1,4 @@
-import type { OutcomeEvidence, TaskOutcomeStatus } from './store.js';
+import type { ActionType, OutcomeEvidence, TaskOutcomeStatus } from './store.js';
 import type { ScripRuntime } from './runtime.js';
 
 export async function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
@@ -42,4 +42,33 @@ export async function settleTask(
 
 export function revokeTask(runtime: ScripRuntime, authorizationId: string): void {
   runtime.authorizations.revokeTask(authorizationId);
+}
+
+export function showTask(runtime: ScripRuntime, authorizationId: string) {
+  return runtime.authorizations.getAuthorization(authorizationId);
+}
+
+export function showTaskTree(runtime: ScripRuntime, authorizationId: string) {
+  return runtime.authorizations.getLeaseTree(authorizationId);
+}
+
+export async function showReceipt(runtime: ScripRuntime, authorizationId: string) {
+  const receipt = await runtime.ramp.getReceipt(authorizationId);
+  if (!receipt) throw new Error(`No settled receipt for task authorization "${authorizationId}"`);
+  return receipt;
+}
+
+export function reserveAction(
+  runtime: ScripRuntime,
+  params: { credential: string; actionType: ActionType; label: string; maximumCost: number }
+) {
+  return runtime.authorizations.reserveAction(params.credential, params.actionType, params.label, params.maximumCost);
+}
+
+export function commitAction(runtime: ScripRuntime, reservationId: string, actualCost: number): void {
+  runtime.authorizations.commitAction(reservationId, actualCost);
+}
+
+export function cancelAction(runtime: ScripRuntime, reservationId: string): void {
+  runtime.authorizations.cancelAction(reservationId);
 }

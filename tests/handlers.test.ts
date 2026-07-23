@@ -2,7 +2,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { authorizeTask, delegateTaskAllowance, getBudgetPolicy, revokeTask, settleTask } from '../src/handlers.js';
+import {
+  authorizeTask,
+  cancelAction,
+  commitAction,
+  delegateTaskAllowance,
+  getBudgetPolicy,
+  reserveAction,
+  revokeTask,
+  settleTask,
+  showReceipt,
+  showTask,
+  showTaskTree,
+} from '../src/handlers.js';
 import { InvalidCredentialError } from '../src/lease.js';
 import { ScripRuntime } from '../src/runtime.js';
 
@@ -82,5 +94,49 @@ describe('task credential handlers', () => {
     });
     revokeTask(runtime, root.authorization.authorizationId);
     expect(() => runtime.authorizations.getLeaseForCredential(root.credential)).toThrow(InvalidCredentialError);
+  });
+
+  it('shows a task and its lease tree', async () => {
+    const root = await authorizeTask(runtime, { budget: 'research', taskId: 'task-1', task: 'Review code', allowance: 1 });
+    delegateTaskAllowance(runtime, { parentCredential: root.credential, agentId: 'child-1', allowance: 0.3 });
+
+    expect(showTask(runtime, root.authorization.authorizationId)).toMatchObject({ taskId: 'task-1', status: 'active' });
+    const tree = showTaskTree(runtime, root.authorization.authorizationId);
+    expect(tree).toHaveLength(2);
+    expect(tree[0].agentId).toBe('root');
+  });
+
+  it('reserves, commits, and cancels a generic economic action', async () => {
+    const root = await authorizeTask(runtime, { budget: 'research', taskId: 'task-1', task: 'Review code', allowance: 1 });
+
+    const reservation = reserveAction(runtime, {
+      credential: root.credential,
+      actionType: 'paid_api',
+      label: 'vendor_comparison_api',
+      maximumCost: 0.1,
+    });
+    expect(reservation.status).toBe('reserved');
+    commitAction(runtime, reservation.reservationId, 0.07);
+    expect(runtime.authorizations.getAuthorization(root.authorization.authorizationId).spent).toBeCloseTo(0.07);
+
+    const toCancel = reserveAction(runtime, {
+      credential: root.credential,
+      actionType: 'paid_api',
+      label: 'vendor_comparison_api',
+      maximumCost: 0.1,
+    });
+    cancelAction(runtime, toCancel.reservationId);
+    expect(runtime.authorizations.getAuthorization(root.authorization.authorizationId).pending).toBeCloseTo(0);
+  });
+
+  it('shows a settled receipt, and throws for a task that has not settled', async () => {
+    const root = await authorizeTask(runtime, { budget: 'research', taskId: 'task-1', task: 'Review code', allowance: 1 });
+
+    await expect(showReceipt(runtime, root.authorization.authorizationId)).rejects.toThrow(/No settled receipt/);
+
+    await settleTask(runtime, root.authorization.authorizationId, { status: 'success' });
+    const receipt = await showReceipt(runtime, root.authorization.authorizationId);
+    expect(receipt.authorizationId).toBe(root.authorization.authorizationId);
+    expect(receipt.outcome).toBe('success');
   });
 });
