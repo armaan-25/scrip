@@ -1,0 +1,36 @@
+# Local deployment scaffolding. `postgres` here is real and will run
+# PostgresTaskStore's schema.sql fine (`docker compose exec app node -e
+# "..."` or a future migration entrypoint) - but the running `app`
+# service does NOT read DATABASE_URL or use Postgres yet, since
+# PostgresTaskStore isn't wired in as ScripRuntime's backend (see
+# docs/PIVOT_AUDIT.md). This compose file exists to make the *intended*
+# shape runnable and inspectable now, not to claim that wiring is done.
+services:
+  app:
+    build: .
+    ports:
+      - '8787:8787'
+    environment:
+      SCRIP_CONFIG: scrip.yaml
+      SCRIP_STORE: /data/ramp.json
+      SCRIP_LEASE_STORE: /data/leases.json
+      DATABASE_URL: postgres://scrip:scrip@postgres:5432/scrip
+    volumes:
+      - scrip-data:/data
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scrip
+      POSTGRES_PASSWORD: scrip
+      POSTGRES_DB: scrip
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  scrip-data:
+  postgres-data:
