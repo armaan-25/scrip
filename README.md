@@ -60,16 +60,38 @@ tiers:
 Ramp OAuth (client-credentials), real Ramp Fund balance reads, real
 broadcast to Ramp's AI Usage Tracking, real Anthropic and OpenAI
 inference dispatch, the CLI's full task/action/receipt lifecycle over
-separate processes, the MCP server over a real protocol round-trip.
+separate processes, the MCP server over a real protocol round-trip, the
+hosted HTTP API (real TCP requests, real Bearer auth, real status-code
+semantics — 401/402/403/404 mapped from real error types, not just 200s),
+and a real concurrency-safe Postgres store (`PostgresTaskStore` — atomic
+`reserveAction` via row-level locking, idempotency-key-safe retries,
+proven with a live test that races two connections for the same
+remaining balance and asserts exactly one wins).
 
 **Built and tested, not yet live-verified against a real external
 service:** `GithubPrOutcomeVerifier` (real GitHub REST API shapes,
 confirmed against GitHub's own docs, but only unit-tested against a fake
 `fetch` — no `GITHUB_TOKEN` configured in this environment yet).
 
-**Designed but not yet built:** durable transactional persistence beyond
-the CLI's opt-in local JSON file (no Postgres store, no idempotency keys,
-no crash recovery), a hosted HTTP API — see `docs/PIVOT_AUDIT.md`.
+**Built, not yet integrated:** `PostgresTaskStore` proves the durable,
+cross-process-safe mechanism for real, but isn't wired in as
+`TaskAuthorizationManager`'s storage backend yet — that manager's public
+API is synchronous in several places used throughout the whole codebase,
+and swapping its backend is a real, separate integration decision (see
+`docs/PIVOT_AUDIT.md`). The compiled production build
+(`node dist/bin/http-server.js`, not just `tsx` against source) was
+actually run and verified live — a real bug (two missing runtime assets
+in `dist/`) was caught and fixed this way. The `Dockerfile` itself has
+not been through `docker build` (no reachable Docker daemon in this
+environment) — every file it references was confirmed to exist, and the
+command it runs was verified directly, but the container wrapper is
+unverified. `docker-compose.yml` runs a real Postgres alongside the app,
+but the app doesn't read `DATABASE_URL` yet, for the same reason
+`PostgresTaskStore` isn't wired in.
+
+**Designed but not yet built:** no auth/gateway layer in front of the
+HTTP API, no idempotency-key support anywhere except `PostgresTaskStore`
+itself, no crash recovery/expiry-cleanup daemon.
 
 ## Run it
 
@@ -218,6 +240,38 @@ Each invocation is a separate process; state persists to
 `.scrip/leases.json` (override with `SCRIP_LEASE_STORE`) so `task
 authorize` and a later `task settle` chain correctly.
 
+## Hosted HTTP API
+
+```bash
+npm run http-server   # PORT env var, default 8787
+```
+
+```bash
+curl -X POST localhost:8787/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"budget":"research","taskId":"task-1","task":"Review PR 418","allowance":1}'
+# -> { "credential": "scrip_...", "authorization": {...}, "lease": {...} }
+
+curl -X POST localhost:8787/v1/actions/reserve \
+  -H 'Authorization: Bearer scrip_...' -H 'Content-Type: application/json' \
+  -d '{"actionType":"paid_api","label":"vendor_api","maximumCost":0.1}'
+```
+
+Routes: `POST /v1/tasks`, `GET /v1/tasks/:taskId`, `GET
+/v1/tasks/:taskId/tree`, `POST /v1/tasks/:taskId/delegate|settle|revoke`,
+`GET /v1/tasks/:taskId/receipt`, `POST /v1/actions/reserve`, `POST
+/v1/actions/:actionId/commit|cancel`. Credentials travel as `Authorization:
+Bearer <credential>`. No business logic lives in the route layer — every
+route is a thin wrapper over the same `src/handlers.ts` functions the CLI
+and MCP server call. Errors map to real HTTP status codes:
+`InvalidCredentialError`→401, `ApprovalRequiredError`→403,
+`SpendLimitExceededError`→402, validation issues→400, unknown
+task/receipt lookups→404.
+
+**Not included:** any authentication/authorization layer in front of
+these routes. A real deployment needs its own gateway/API-key/mTLS layer
+— this is the application boundary, not the network perimeter.
+
 ## Real Ramp integration
 
 Drop credentials into `.env` (`RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`,
@@ -240,3 +294,36 @@ atomic reservations, attenuated delegation, and outcome-backed
 settlement for one execution — it integrates with Ramp through the
 `FinanceControlPlane`/`RampGateway` boundary rather than recreating any
 of what Ramp already owns.
+
+## Durable, concurrency-safe persistence
+
+`src/infrastructure/postgres/postgres-task-store.ts`'s `PostgresTaskStore`
+answers the question every in-memory system eventually has to: what
+happens when two processes reserve against the same remaining balance at
+the same instant? `reserveAction()` takes a real row lock (`SELECT ...
+FOR UPDATE`) on both the lease and the task authorization for the
+duration of one transaction — a concurrent caller blocks until it
+commits or rolls back, so two callers racing for the same balance can
+never both succeed when only one actually fits. Supports idempotency
+keys, so a caller can safely retry a network call without double-reserving.
+
+This is proven with a real test, not asserted: `tests/postgres-task-store.test.ts`
+opens two separate connection pools (literally simulating two separate
+processes) and fires two reservations at the same instant that together
+oversubscribe the balance — asserts exactly one wins, every time. Those
+tests need a real Postgres reachable at `PGHOST`/`PGPORT`/`PGUSER`/
+`PGDATABASE` (defaults match a project-local dev instance); they skip
+cleanly, not fail, when nothing is listening, so `npm test` stays fully
+offline-runnable.
+
+**Not yet wired in as the engine's backend.** `TaskAuthorizationManager`
+(the thing every other surface in this README actually talks to) still
+holds state in-memory, with the CLI's own opt-in single-JSON-file
+persistence for chaining across separate invocations — genuinely useful,
+but not concurrency-safe the way `PostgresTaskStore` is. Swapping the
+backend is real, separate integration work: `TaskAuthorizationManager`'s
+public API is synchronous in several places, used throughout the whole
+codebase, and changing that is a design decision this repo hasn't made
+yet. `docker-compose.yml` runs a real Postgres alongside the app today,
+but the app doesn't talk to it — that wiring is the next real piece of
+work, not a rename.

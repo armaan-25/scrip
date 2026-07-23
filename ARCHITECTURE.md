@@ -4,10 +4,13 @@
 > toward a broader execution-economics platform for autonomous work. The
 > domain mechanism described below (atomic reserve/commit/cancel over any
 > action type, not just inference) was already generalized before the
-> pivot began, and the CLI has since been reshaped around task/action/
-> receipt nouns — see `docs/PIVOT_AUDIT.md` for the full classification of
-> what's built, what's a rename-in-progress, and what's genuinely new
-> (durable Postgres persistence and a hosted HTTP API don't exist yet).
+> pivot began, the CLI has since been reshaped around task/action/receipt
+> nouns, a hosted HTTP API exists and is tested, and a real
+> concurrency-safe Postgres store exists and is proven against a live
+> database — see `docs/PIVOT_AUDIT.md` for the full classification of
+> what's built, what's built-but-not-integrated, and what's genuinely
+> not started (`PostgresTaskStore` isn't wired in as
+> `TaskAuthorizationManager`'s backend yet).
 
 ## What this is
 
@@ -269,11 +272,50 @@ logic:
   `RampGateway.getReceipt()` (the local write, even against
   `RampApiGateway` — Ramp's AI Usage Tracking is a one-way broadcast, not
   a queryable store).
+- **`src/interfaces/http/server.ts`** / **`bin/http-server.ts`** — a
+  fourth thin surface, same principle as the other three: `createHttpServer(runtime)`
+  builds an Express app whose routes each call one `src/handlers.ts`
+  function and translate its result/error into an HTTP response and
+  status code (`InvalidCredentialError`→401, `ApprovalRequiredError`→403,
+  `SpendLimitExceededError`→402, unknown-lookup errors→404, everything
+  else→400). Credentials travel as `Authorization: Bearer <credential>`.
+  Tested with real HTTP requests over a real TCP connection
+  (`server.listen(0)` + Node's built-in `fetch`), not a mocked Express
+  instance. Carries no authentication/authorization layer of its own by
+  design — that's a deployment-time concern, not this surface's job.
 
-`src/runtime.ts`'s `ScripRuntime` is the composition root all three
+`src/runtime.ts`'s `ScripRuntime` is the composition root all four
 surfaces build on: loads `scrip.yaml` via `src/config.ts`, picks a
 `RampGateway`, constructs `TaskAuthorizationManager`, owns a
 `BudgetRouter`.
+
+### Durable, concurrency-safe persistence
+
+`src/infrastructure/postgres/postgres-task-store.ts`'s `PostgresTaskStore`
+is a real, independent implementation of the authorize/reserve/commit/cancel
+primitive backed by Postgres transactions and `SELECT ... FOR UPDATE` row
+locks on both the lease and task-authorization rows — the property a
+process-local `Map` cannot offer: two separate connections (simulating
+two separate processes) racing to reserve against the same remaining
+balance can never both succeed when only one fits. Supports
+idempotency-key-safe retries (`action_reservations`'s unique index on
+`metadata->>'idempotencyKey'`), a real requirement for a durable store
+that an in-memory Map never had to solve.
+
+Proven with a live test (`tests/postgres-task-store.test.ts`) against a
+real Postgres, not asserted from the schema alone — including a test
+that fires two concurrent reservations from two separate `pg.Pool`
+instances and asserts exactly one wins. Tests skip cleanly (not fail)
+when no Postgres is reachable at `PGHOST`/`PGPORT`/`PGUSER`/`PGDATABASE`.
+
+**Not yet wired in as `TaskAuthorizationManager`'s backend.**
+`TaskAuthorizationManager`'s public API is synchronous in several places
+(`delegate`, `reserveAction`, `commitAction`, `cancelAction`,
+`getAuthorization`, ...), used throughout every other surface in this
+document and 121 existing tests; swapping its backend to something
+async is a real, separate integration decision this repo hasn't made.
+`PostgresTaskStore` stands on its own today, proving the mechanism for
+real ahead of that integration.
 
 ## End-to-end flow
 
@@ -313,7 +355,7 @@ Caller selects budget + task allowance
 
 ## Testing philosophy
 
-Dependency injection everywhere a real external system is involved: fake
+Dependency injection everywhere a real *external* system is involved: fake
 HTTP/SDK clients matching the real SDKs' shapes for Anthropic, OpenAI,
 Ramp's OAuth/Funds/AI-Usage-Tracking endpoints, and GitHub's REST API. No
 test calls a real external API. Real-API verification instead happens via
@@ -322,8 +364,20 @@ credentials in `.env`, and by literally running the demos
 (`demo/run-demo.ts`, `scripts/demo-flagship.ts`) against the real
 sandbox — both approaches have caught real bugs unit tests with fakes
 couldn't (a double Fund-ID resolution bug, a required-but-undocumented
-`usage.meters` field, and a demo budget that didn't actually allow the
-model it tried to route to).
+`usage.meters` field, a demo budget that didn't actually allow the model
+it tried to route to, and two runtime assets missing from the compiled
+`dist/` output that only surfaced by actually running it).
+
+Two exceptions, deliberate: `tests/postgres-task-store.test.ts` and parts
+of `tests/http-server.test.ts` exercise real infrastructure this project
+controls rather than a third party - a real local Postgres and a real
+TCP server on an ephemeral port, respectively. Neither is a "real
+external API" in the sense above (no third-party credentials, no
+network egress, nothing another team owns); they're testing this
+project's own concurrency and HTTP-semantics guarantees, which fakes
+cannot actually prove. The Postgres tests skip cleanly when no database
+is reachable, so `npm test` stays fully offline-runnable for anyone
+without one.
 
 ## Known gaps / deliberately out of scope
 
@@ -331,14 +385,26 @@ Per the pivot instruction's own principle — don't claim unbuilt
 functionality — these are genuinely not built, not "designed but
 basically done":
 
-- **Persistence beyond the CLI's opt-in JSON file** — no transactional
-  store, no idempotency keys, no expiry cleanup daemon, no Postgres
-  adapter. The MCP server and demo scripts are still purely in-memory per
-  process. Two independent processes reserving against the same task
-  would race today; nothing in this repo prevents that except the CLI's
-  single-JSON-file serialization, which is not a concurrency-safe store.
-- **No hosted HTTP gateway** — everything here runs as a library/CLI/MCP
-  server a caller embeds or runs locally, not a multi-tenant service.
+- **`PostgresTaskStore` is real and proven, but not `TaskAuthorizationManager`'s
+  backend.** The engine every other surface (CLI, MCP, HTTP, demos) talks
+  to still holds state in-memory, with the CLI's own opt-in
+  single-JSON-file persistence for cross-invocation chaining — not
+  concurrency-safe the way the Postgres store is. Two independent
+  processes reserving against the same task via `TaskAuthorizationManager`
+  would still race today; the mechanism that prevents that exists and is
+  tested, it's just not plugged in yet.
+- **No idempotency-key support outside `PostgresTaskStore`** — the CLI,
+  HTTP API, and MCP server have no retry-safety of their own.
+- **No expiry cleanup daemon, no crash recovery beyond what Postgres
+  transactions give for free.**
+- **The HTTP API has no authentication/authorization layer** — by
+  design, not oversight (see `src/interfaces/http/server.ts`'s own
+  comment), but genuinely absent, so it isn't safe to expose publicly
+  without one.
+- **The `Dockerfile` has not been through `docker build`** — no reachable
+  Docker daemon in this environment. The command it runs was verified
+  directly against the compiled `dist/` output; the container wrapper
+  around it was not.
 - **No Agent Card purchase flow / `TaskCostEstimator`** — scoped out
   earlier as a separate, larger surface (real-time per-purchase spend,
   not metered inference).

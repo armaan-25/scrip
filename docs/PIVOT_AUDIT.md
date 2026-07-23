@@ -458,7 +458,72 @@ start Postgres/HTTP API, two more commits landed, tests green
   separate CLI processes, including both brand-new commands (`task
   tree`, `receipt show`), not just unit-tested.
 
-**Still explicitly not started:** Phase 3 (Postgres/durable
-persistence), Phase 4 (hosted HTTP API), the full
+**Still explicitly not started (as of §11):** the full
 `src/domain/application/infrastructure/interfaces` directory
-restructure.
+restructure (though `src/infrastructure/postgres/` and
+`src/interfaces/http/` were created for the two subsystems below,
+following that tree for new code without moving everything else yet).
+
+## 12. Migration log, continued — Phase 3 (Postgres) and Phase 4 (HTTP API)
+
+Given explicit direction to implement the two previously-deferred
+subsystems, both landed for real, tests green (129→140) throughout:
+
+- **Phase 3, `PostgresTaskStore`:** a real, project-scoped, ephemeral
+  Postgres instance was initialized (`.pgdata-dev/`, gitignored — not a
+  system service, doesn't touch any of the user's other Postgres
+  installs) specifically so this could be built against and proven live
+  rather than mocked. `reserveAction`/`commitAction`/`cancelAction` use
+  real transactions with `SELECT ... FOR UPDATE` row locks; idempotency
+  keys are supported via a partial unique index. `tests/postgres-task-store.test.ts`
+  includes two genuine concurrency-race tests (one within a pool, one
+  across two separate `Pool` instances simulating two processes) that
+  fire simultaneous reservations exceeding the remaining balance and
+  assert exactly one wins — this is the literal claim from the original
+  pitch ("two independent processes must not reserve the same remaining
+  allowance") now proven, not just designed. **Not wired in** as
+  `TaskAuthorizationManager`'s backend — a real, separate integration
+  decision (that manager's API is synchronous in several places used
+  throughout the whole codebase) deliberately not made unilaterally.
+  A real bug was caught building the test: `describe.skipIf()` evaluates
+  its condition at collection time, before `beforeAll` runs, so a
+  Postgres-availability flag set inside `beforeAll` was always stale —
+  fixed with a top-level-await probe instead.
+- **Phase 4, hosted HTTP API:** `src/interfaces/http/server.ts` (Express,
+  justified as solving routing/body-parsing/error-middleware without
+  hand-rolling all of it) wraps the same `handlers.ts` functions the CLI
+  and MCP server call. `POST/GET /v1/tasks`, `/v1/tasks/:id/delegate|
+  settle|revoke|tree|receipt`, `/v1/actions/reserve`,
+  `/v1/actions/:id/commit|cancel`. Real HTTP status codes from real
+  error types (401/402/403/404), not generic 500s. Tested with real TCP
+  requests against a `server.listen(0)` ephemeral port (11 tests, not
+  mocked), then manually smoke-tested with `curl` through a full
+  authorize→reserve→commit→settle→receipt lifecycle against real Ramp
+  Fund policy.
+- **A real, previously-undiscovered bug caught along the way:** the
+  compiled production build (`npm run build` → `node dist/bin/http-server.js`)
+  had apparently never actually been run before this session — `tsc`
+  doesn't copy non-`.ts` assets, so both `model_price.json` (needed by
+  `src/pricing.ts`) and the new `schema.sql` were missing from `dist/`,
+  and the built server crashed on startup with `ENOENT`. Fixed in the
+  `build` script; re-verified by actually running `node dist/bin/http-server.js`
+  (not `tsx`) and hitting it with `curl` against real Ramp.
+- **Deployment scaffolding:** a multi-stage `Dockerfile` (non-root
+  `node` user, added after a real Docker security lint hit during
+  review) and `docker-compose.yml` with a real `postgres` service.
+  Explicitly documented, not overclaimed: the `Dockerfile` itself was
+  never run through `docker build` (no Docker daemon reachable in this
+  environment) — every file it references was confirmed to exist, and
+  the command it runs was verified directly against the compiled
+  output, but the container wrapper is unverified. `docker-compose.yml`'s
+  `postgres` service is real but the `app` service doesn't read
+  `DATABASE_URL` yet, for the same reason `PostgresTaskStore` isn't
+  wired into `TaskAuthorizationManager`.
+
+**What's left, honestly:** wiring `PostgresTaskStore` in as
+`TaskAuthorizationManager`'s actual backend (or migrating callers to an
+async API that can use it) is the one piece that would make the "durable
+persistence" claim end-to-end rather than "proven as a standalone
+mechanism." An auth/gateway layer in front of the HTTP API. An actual
+`docker build`/deployment. All three are real, scoped, next steps, not
+hidden gaps.
