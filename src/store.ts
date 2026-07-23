@@ -93,6 +93,8 @@ interface StoreData {
 export interface RampGateway {
   getReportedSpend(rampBudgetId: string, sinceMonth?: string): Promise<number>;
   reportTaskUsage(receipt: TaskReceipt): Promise<void>;
+  /** The settled receipt for a task, if it's been reported through this gateway. Used by `scrip receipt show/export`. */
+  getReceipt(authorizationId: string): Promise<TaskReceipt | undefined>;
 }
 
 /**
@@ -160,6 +162,10 @@ export class LocalReceiptStore {
   getReceipts(): TaskReceipt[] {
     return this.load().receipts;
   }
+
+  getReceipt(authorizationId: string): TaskReceipt | undefined {
+    return this.load().receipts.find((receipt) => receipt.authorizationId === authorizationId);
+  }
 }
 
 /** Local Ramp boundary used by the demo. Replace this adapter, not the lease engine. */
@@ -176,6 +182,10 @@ export class MockRampGateway implements RampGateway {
 
   async getReportedSpend(rampBudgetId: string, sinceMonth?: string): Promise<number> {
     return this.store.getSpend(rampBudgetId, sinceMonth);
+  }
+
+  async getReceipt(authorizationId: string): Promise<TaskReceipt | undefined> {
+    return this.store.getReceipt(authorizationId);
   }
 
   getReceipts(): TaskReceipt[] {

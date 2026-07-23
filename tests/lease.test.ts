@@ -251,6 +251,25 @@ describe('TaskAuthorizationManager', () => {
     expect(cancelled.status).toBe('cancelled');
   });
 
+  it('returns every lease under a task, root first, in delegation order', async () => {
+    const root = await authorize(1);
+    const child1 = manager.delegate(root.credential, 'child-1', 0.3);
+    const grandchild = manager.delegate(child1.credential, 'grandchild-1', 0.1);
+    manager.delegate(root.credential, 'child-2', 0.3);
+
+    const tree = manager.getLeaseTree(root.authorization.authorizationId);
+    expect(tree).toHaveLength(4);
+    expect(tree[0].agentId).toBe('root');
+    expect(tree[0].depth).toBe(0);
+    expect(tree.map((l) => l.leaseId)).toContain(child1.lease.leaseId);
+    expect(tree.map((l) => l.leaseId)).toContain(grandchild.lease.leaseId);
+    expect(tree.every((l) => !('credentialHash' in l))).toBe(true);
+  });
+
+  it('returns an empty tree for an unknown authorizationId rather than throwing', () => {
+    expect(manager.getLeaseTree('not-a-real-id')).toEqual([]);
+  });
+
   it('persists authorizations and leases across separate manager instances pointed at the same store file', async () => {
     const storePath = path.join(tmpDir, 'leases.json');
     const managerA = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);

@@ -55,4 +55,13 @@ describe('MockRampGateway', () => {
     await ramp.reportTaskUsage(receipt({ settledAt: '2020-01-15T00:00:00.000Z' }));
     expect(await ramp.getReportedSpend('budget-1', '2026-07')).toBe(0);
   });
+
+  it('looks up a single receipt by authorizationId', async () => {
+    const ramp = new MockRampGateway(filePath);
+    await ramp.reportTaskUsage(receipt({ authorizationId: 'auth-1' }));
+    await ramp.reportTaskUsage(receipt({ receiptId: 'receipt-2', authorizationId: 'auth-2' }));
+
+    expect((await ramp.getReceipt('auth-2'))?.receiptId).toBe('receipt-2');
+    expect(await ramp.getReceipt('not-a-real-auth')).toBeUndefined();
+  });
 });

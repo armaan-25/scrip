@@ -143,6 +143,16 @@ describe('RampApiGateway', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it('reads a previously reported receipt back by authorizationId, from the local write - not a Ramp API call', async () => {
+    const fetchFn = fakeFetch({ token: { access_token: 'token-abc', expires_in: 3600 }, fund: realFundResponse(0) });
+    const gateway = new RampApiGateway(config, receiptPath, fetchFn);
+    await gateway.reportTaskUsage(receipt({ authorizationId: 'auth-42' }));
+
+    const found = await gateway.getReceipt('auth-42');
+    expect(found?.authorizationId).toBe('auth-42');
+    expect(await gateway.getReceipt('not-a-real-auth')).toBeUndefined();
+  });
+
   it('also broadcasts via Meter when one is provided, in addition to the local write', async () => {
     const fetchFn = fakeFetch({
       token: { access_token: 'token-abc', expires_in: 3600 },

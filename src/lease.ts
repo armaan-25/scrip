@@ -501,6 +501,14 @@ export class TaskAuthorizationManager {
     return this.publicLease(lease);
   }
 
+  /** Every lease under a task - root first, then children in delegation order. Read-only, used by `scrip task tree`. */
+  getLeaseTree(authorizationId: string): InferenceLease[] {
+    return [...this.leases.values()]
+      .filter((lease) => lease.authorizationId === authorizationId)
+      .sort((a, b) => a.depth - b.depth)
+      .map((lease) => this.publicLease(lease));
+  }
+
   /** Shared by settleTask() and getEvidenceSnapshot(): modelUsage is inference-only (token-level detail); actionUsage rolls up every action type, inference included. */
   private aggregateUsage(events: ActionEvent[]): { modelUsage: ModelUsage[]; actionUsage: ActionUsage[] } {
     const byModel = new Map<string, ModelUsage>();

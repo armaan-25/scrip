@@ -92,4 +92,12 @@ export class RampApiGateway implements RampGateway {
       }
     }
   }
+
+  // The local receipt (already the source of truth by the time
+  // reportTaskUsage returns) is also the read path - Ramp's AI Usage
+  // Tracking is a one-way broadcast, not a queryable store this could read
+  // a specific receipt back from.
+  async getReceipt(authorizationId: string): Promise<TaskReceipt | undefined> {
+    return this.receipts.getReceipt(authorizationId);
+  }
 }
