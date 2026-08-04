@@ -32,6 +32,18 @@ import type { ActionType, TaskOutcomeStatus } from '../../store.js';
 export function createHttpServer(runtime: ScripRuntime): express.Express {
   const app = express();
   app.use(express.json());
+  // Permissive CORS so a local static page (e.g. visuals/receipt-live.html,
+  // opened as a file:// or a separate dev server) can call this API directly
+  // from a browser. Consistent with this surface's existing documented
+  // stance above: it already carries no auth/gateway layer of its own, so
+  // this doesn't widen the real security boundary - a production deployment
+  // puts its gateway in front of both concerns at once.
+  app.use((_req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    next();
+  });
 
   app.post('/v1/tasks', asyncRoute(async (req, res) => {
     const { budget, taskId, task, allowance, ttlMs } = req.body ?? {};

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Scrip — real inference, live</title>
+<style>
+  /*
+    Same identity (white/black/Ramp yellow). Difference from agents-live.html:
+    every number and every word of text here comes from a REAL Anthropic API
+    call - real latency included, so agents sit in a visible "thinking" state
+    for a few real seconds before their real answer and real cost land.
+  */
+  :root {
+    --paper: #fafaf7;
+    --ink: #16150f;
+    --ink-muted: #86847c;
+    --ramp-yellow: #e4f222;
+    --denied-red: #8a3b32;
+    --surface: #101010;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--surface);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--paper);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 20px;
+  }
+  .stage { width: min(460px, 92vw); display: flex; flex-direction: column; gap: 16px; }
+
+  .wordmark { text-align: center; font-size: 28px; font-weight: 900; letter-spacing: -0.01em; font-style: italic; opacity: 0.9; }
+  .eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #8f8d86;
+    text-align: center;
+  }
+  .eyebrow b { color: var(--ramp-yellow); font-weight: 600; }
+
+  .agents { display: flex; flex-direction: column; gap: 10px; }
+
+  .agent {
+    background: #1c1c1c;
+    border: 1px solid #2c2c2c;
+    color: var(--paper);
+    border-radius: 4px;
+    padding: 13px 15px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.35s ease-out, transform 0.35s ease-out;
+  }
+  .agent.shown { opacity: 1; transform: translateY(0); }
+
+  .agent-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .agent-name { font-weight: 700; }
+  .agent-meta { color: var(--ink-muted); }
+
+  .pill {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ink-muted);
+  }
+  .pill::before { content: '['; }
+  .pill::after { content: ']'; }
+  .pill.thinking { animation: pulse 1.1s ease-in-out infinite; }
+  .pill.done { color: var(--ramp-yellow); }
+
+  @keyframes pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+  .agent-preview {
+    margin-top: 8px;
+    line-height: 1.5;
+    color: var(--paper);
+    display: none;
+    border-top: 1px dashed rgba(250,250,247,0.15);
+    padding-top: 8px;
+  }
+  .agent-preview.shown { display: block; }
+
+  .panel-total {
+    background: #1c1c1c;
+    border: 1px solid #2c2c2c;
+    border-radius: 4px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.4s ease-out;
+  }
+  .panel-total.shown { opacity: 1; }
+  .panel-total .label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); }
+  .panel-total b { color: var(--ramp-yellow); }
+  #total-line { word-break: break-word; }
+
+  .status {
+    color: #8f8d86;
+    text-align: center;
+    min-height: 1.6em;
+  }
+  .status b { color: var(--ramp-yellow); }
+  .status.error b { color: var(--denied-red); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .agent, .panel-total, .pill.thinking { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="wordmark">SCRIP</div>
+  <p class="eyebrow">real anthropic calls. real cost. real answers — <b>live</b>.</p>
+
+  <div class="agents" id="agents"></div>
+
+  <div class="panel-total" id="panel-total">
+    <span class="label">Task settled</span>
+    <span id="total-line">—</span>
+  </div>
+
+  <p class="status" id="status">connecting…</p>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => `$${Number(n).toFixed(6)}`;
+  const rows = new Map();
+
+  function setStatus(text, isError = false) {
+    $('status').innerHTML = text;
+    $('status').classList.toggle('error', isError);
+  }
+
+  function ensureRow(agentId) {
+    if (rows.has(agentId)) return rows.get(agentId);
+    const el = document.createElement('div');
+    el.className = 'agent';
+    el.innerHTML = `
+      <div class="agent-top">
+        <span class="agent-name">${agentId}</span>
+        <span class="pill thinking">thinking</span>
+      </div>
+      <div class="agent-meta" id="meta-${agentId}">$0.40 delegated</div>
+      <div class="agent-preview" id="preview-${agentId}"></div>
+    `;
+    $('agents').appendChild(el);
+    requestAnimationFrame(() => el.classList.add('shown'));
+    rows.set(agentId, el);
+    return el;
+  }
+
+  function handle(event) {
+    switch (event.type) {
+      case 'authorized':
+        setStatus(`task authorized for <b>$${event.allowance.toFixed(2)}</b> — delegating to two real agents`);
+        break;
+      case 'delegated':
+        ensureRow(event.agentId);
+        break;
+      case 'thinking':
+        setStatus(`${event.agentId} is making a real Anthropic API call…`);
+        break;
+      case 'answered': {
+        const el = ensureRow(event.agentId);
+        el.querySelector('.pill').textContent = 'answered';
+        el.querySelector('.pill').className = 'pill done';
+        $(`meta-${event.agentId}`).textContent = `${event.model} · ${fmt(event.cost)}`;
+        const preview = $(`preview-${event.agentId}`);
+        preview.textContent = event.preview;
+        preview.classList.add('shown');
+        setStatus(`${event.agentId} answered for real — ${fmt(event.cost)}`);
+        break;
+      }
+      case 'settled':
+        $('total-line').innerHTML = `authorized ${fmt(event.authorized)} · actual <b>${fmt(event.actual)}</b> · returned ${fmt(event.returned)}`;
+        $('panel-total').classList.add('shown');
+        setStatus(`settled — real inference cost <b>${fmt(event.actual)}</b>, ${fmt(event.returned)} released automatically`);
+        break;
+      case 'error':
+        setStatus(`error: <b>${event.message}</b>`, true);
+        break;
+    }
+  }
+
+  const source = new EventSource('/events');
+  source.onmessage = (msg) => handle(JSON.parse(msg.data));
+  source.onerror = () => {
+    setStatus('lost connection — reload to run it again', true);
+    source.close();
+  };
+</script>
+</body>
+</html>
