@@ -72,6 +72,34 @@ describe('TaskAuthorizationManager', () => {
     expect(() => manager.getAuthorizationForCredential(root.credential)).toThrow(InvalidCredentialError);
   });
 
+  it('sweepExpired finds nothing when no authorization has expired', async () => {
+    await authorize();
+    expect(manager.sweepExpired()).toEqual({ revokedAuthorizations: [], cancelledReservations: [] });
+  });
+
+  it('sweepExpired cancels a reservation stuck pending under an expired task, releasing its budget', async () => {
+    const root = await authorize(1, 50);
+    const reservation = manager.reserveAction(root.credential, 'purchase', 'vendor_dataset_license', 0.4);
+
+    const result = manager.sweepExpired(new Date(Date.now() + 100));
+
+    expect(result.revokedAuthorizations).toEqual([root.authorization.authorizationId]);
+    expect(result.cancelledReservations).toEqual([reservation.reservationId]);
+    expect(manager.getAuthorization(root.authorization.authorizationId).status).toBe('revoked');
+    expect(manager.getAuthorization(root.authorization.authorizationId).pending).toBe(0);
+    expect(manager.getLeaseTree(root.authorization.authorizationId)[0].status).toBe('revoked');
+  });
+
+  it('sweepExpired never touches an authorization that is not yet expired', async () => {
+    const root = await authorize(1);
+    manager.reserveAction(root.credential, 'purchase', 'vendor_dataset_license', 0.4);
+
+    const result = manager.sweepExpired();
+
+    expect(result).toEqual({ revokedAuthorizations: [], cancelledReservations: [] });
+    expect(manager.getAuthorization(root.authorization.authorizationId).status).toBe('active');
+  });
+
   it('settles one receipt for root and child usage and reports it to Ramp', async () => {
     const root = await authorize(2);
     const child = manager.delegate(root.credential, 'researcher-1', 0.5);

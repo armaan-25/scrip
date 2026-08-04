@@ -169,6 +169,14 @@ describe('runCli task revoke', () => {
   });
 });
 
+describe('runCli task sweep-expired', () => {
+  it('reports nothing to sweep when no task has expired', async () => {
+    await authorizeRoot(1);
+    const output = await runCli(runtime, ['task', 'sweep-expired']);
+    expect(output).toBe('No expired authorizations found.');
+  });
+});
+
 describe('runCli action reserve/commit/cancel', () => {
   it('reserves, commits, and cancels a generic economic action', async () => {
     const root = await authorizeRoot(1);

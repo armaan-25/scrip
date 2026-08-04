@@ -44,6 +44,10 @@ export function revokeTask(runtime: ScripRuntime, authorizationId: string): void
   runtime.authorizations.revokeTask(authorizationId);
 }
 
+export function sweepExpired(runtime: ScripRuntime) {
+  return runtime.authorizations.sweepExpired();
+}
+
 export function showTask(runtime: ScripRuntime, authorizationId: string) {
   return runtime.authorizations.getAuthorization(authorizationId);
 }
@@ -63,6 +67,15 @@ export function reserveAction(
   params: { credential: string; actionType: ActionType; label: string; maximumCost: number }
 ) {
   return runtime.authorizations.reserveAction(params.credential, params.actionType, params.label, params.maximumCost);
+}
+
+export function reserveCardPurchase(
+  runtime: ScripRuntime,
+  params: { credential: string; label: string; maximumCost: number; merchant: string }
+) {
+  return runtime.authorizations.reserveCardPurchase(params.credential, params.label, params.maximumCost, {
+    merchant: params.merchant,
+  });
 }
 
 export function commitAction(runtime: ScripRuntime, reservationId: string, actualCost: number): void {

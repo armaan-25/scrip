@@ -63,10 +63,14 @@ inference dispatch, the CLI's full task/action/receipt lifecycle over
 separate processes, the MCP server over a real protocol round-trip, the
 hosted HTTP API (real TCP requests, real Bearer auth, real status-code
 semantics — 401/402/403/404 mapped from real error types, not just 200s),
-and a real concurrency-safe Postgres store (`PostgresTaskStore` — atomic
+a real concurrency-safe Postgres store (`PostgresTaskStore` — atomic
 `reserveAction` via row-level locking, idempotency-key-safe retries,
 proven with a live test that races two connections for the same
-remaining balance and asserts exactly one wins).
+remaining balance and asserts exactly one wins), and the crash-recovery
+sweep (`TaskAuthorizationManager.sweepExpired()` /
+`scrip task sweep-expired` — cancels reservations stuck `pending` under a
+task whose worker crashed or never returned, then revokes the task and
+its leases; unit-tested against a manually expired authorization).
 
 **Built and tested, not yet live-verified against a real external
 service:** `GithubPrOutcomeVerifier` (real GitHub REST API shapes,
@@ -81,17 +85,25 @@ and swapping its backend is a real, separate integration decision (see
 `docs/PIVOT_AUDIT.md`). The compiled production build
 (`node dist/bin/http-server.js`, not just `tsx` against source) was
 actually run and verified live — a real bug (two missing runtime assets
-in `dist/`) was caught and fixed this way. The `Dockerfile` itself has
-not been through `docker build` (no reachable Docker daemon in this
-environment) — every file it references was confirmed to exist, and the
-command it runs was verified directly, but the container wrapper is
-unverified. `docker-compose.yml` runs a real Postgres alongside the app,
-but the app doesn't read `DATABASE_URL` yet, for the same reason
-`PostgresTaskStore` isn't wired in.
+in `dist/`) was caught and fixed this way. `docker-compose.yml` runs a
+real Postgres alongside the app, but the app doesn't read `DATABASE_URL`
+yet, for the same reason `PostgresTaskStore` isn't wired in.
+
+**Built and live-verified via a real Docker daemon (2026-08-01):** both
+`docker build` and `docker compose up --build` — the compiled image
+starts, serves a real `POST /v1/tasks` over the compose network, and
+writes its store files to the mounted `/data` volume. That last part
+failed on first real attempt: a named volume with nothing at its mount
+path in the image is created root-owned, and the unprivileged `node` user
+this image runs as couldn't write to it (`EACCES`) — fixed by
+pre-creating and `chown`ing `/data` in the Dockerfile's runtime stage,
+before `USER node`.
 
 **Designed but not yet built:** no auth/gateway layer in front of the
 HTTP API, no idempotency-key support anywhere except `PostgresTaskStore`
-itself, no crash recovery/expiry-cleanup daemon.
+itself. `sweepExpired()` is a sweep a scheduler can invoke (cron, a
+scheduled Lambda), not a built-in daemon with its own scheduling loop —
+nothing in this repo calls it automatically yet.
 
 ## Run it
 

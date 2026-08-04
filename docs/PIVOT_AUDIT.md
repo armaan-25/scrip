@@ -524,6 +524,50 @@ subsystems, both landed for real, tests green (129→140) throughout:
 `TaskAuthorizationManager`'s actual backend (or migrating callers to an
 async API that can use it) is the one piece that would make the "durable
 persistence" claim end-to-end rather than "proven as a standalone
-mechanism." An auth/gateway layer in front of the HTTP API. An actual
-`docker build`/deployment. All three are real, scoped, next steps, not
-hidden gaps.
+mechanism." An auth/gateway layer in front of the HTTP API. All three are
+real, scoped, next steps, not hidden gaps.
+
+## 13. Migration log, continued — Docker verification, expiry-cleanup sweep, Agent Card visual (2026-08-01)
+
+- **The `docker build`/`docker compose up --build` gap above is closed.**
+  A Docker daemon became reachable in this environment; both were run
+  live. `docker build` succeeded on the first try. `docker compose up
+  --build` did not: `app-1` crashed with `EACCES: permission denied, open
+  '/data/ramp.json'` — a named volume with nothing at its mount path in
+  the image is created root-owned by Docker, and this image's
+  unprivileged `node` user (added deliberately, see §12 above) can't
+  write to it. Fixed by pre-creating and `chown`ing `/data` in the
+  Dockerfile's runtime stage, before `USER node`; Docker copies that
+  ownership onto the volume the first time it's attached. Re-verified:
+  both containers come up healthy, the app serves a real
+  `POST /v1/tasks` over the compose network, and `/data/ramp.json` is
+  confirmed written from inside the container. Postgres itself still
+  isn't exercised through the app (`DATABASE_URL` still unread) — that
+  part of the "what's left" list above is unchanged.
+- **`sweepExpired()` closes the "no crash recovery/expiry-cleanup
+  daemon" gap** from README/ARCHITECTURE's known-gaps lists —
+  `TaskAuthorizationManager.sweepExpired()` / `scrip task sweep-expired`
+  cancels reservations still `reserved` under any authorization already
+  past `expiresAt` (releasing their `pending` amount through the normal
+  `cancelAction` path), then revokes the authorization and its leases.
+  Unit-tested against a manually expired authorization with a
+  reservation stuck mid-flight (`tests/lease.test.ts`). What's still
+  missing is only the *scheduling* — this is a sweep a cron or scheduled
+  Lambda invokes, not a self-scheduling daemon; nothing in this repo
+  calls it automatically.
+- **`visuals/agent-card-live.html` + `agent-card-live-server.ts`** — the
+  one feature from §12's follow-on work (`reserveCardPurchase()` /
+  `RampAgentCardIssuer`, added in the session after this one) that had no
+  visualization. Runs against `MockCardIssuer` (deliberately, matching
+  `agents-live.html`'s "synthetic" pattern) since `RampAgentCardIssuer`
+  itself is still not live-verified against a real `cards:write`-scoped
+  Ramp app — see `docs/ramp-api-notes.md`.
+- **Regression baseline for this pass:** 148/148 tests green (144 + 4 new
+  for `sweepExpired`), including `tests/postgres-task-store.test.ts`'s
+  8 tests actually run (not skipped) against a real local Postgres 14
+  instance (`.pgdata-dev/`, restarted for this session), `tsc --noEmit`
+  clean, `npm run build` clean, `scripts/demo-flagship.ts` re-run with
+  the same deterministic four-worker outcome, and all three pre-existing
+  `visuals/*.html` pages re-verified end-to-end against their real
+  backends (one of them, `agents-real.html`, made real Anthropic calls
+  and a real Ramp Fund read/broadcast in the process).

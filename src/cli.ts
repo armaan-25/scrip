@@ -6,7 +6,9 @@ import {
   delegateTaskAllowance,
   getBudgetPolicy,
   reserveAction,
+  reserveCardPurchase,
   revokeTask,
+  sweepExpired,
   settleTask,
   showReceipt,
   showTask,
@@ -60,7 +62,7 @@ async function runBudget(runtime: ScripRuntime, verb: string | undefined, args: 
 // ---- task --------------------------------------------------------------
 
 const TASK_USAGE =
-  'Usage: scrip task <authorize|delegate|show|tree|settle|revoke> ...';
+  'Usage: scrip task <authorize|delegate|show|tree|settle|revoke|sweep-expired> ...';
 
 async function runTask(runtime: ScripRuntime, verb: string | undefined, args: string[]): Promise<string> {
   switch (verb) {
@@ -76,6 +78,8 @@ async function runTask(runtime: ScripRuntime, verb: string | undefined, args: st
       return runTaskSettle(runtime, args);
     case 'revoke':
       return runTaskRevoke(runtime, args);
+    case 'sweep-expired':
+      return runTaskSweepExpired(runtime);
     default:
       throw new UsageError(TASK_USAGE);
   }
@@ -189,6 +193,15 @@ function runTaskRevoke(runtime: ScripRuntime, args: string[]): string {
   return `Revoked authorization ${authorizationId}`;
 }
 
+function runTaskSweepExpired(runtime: ScripRuntime): string {
+  const { revokedAuthorizations, cancelledReservations } = sweepExpired(runtime);
+  if (revokedAuthorizations.length === 0) return 'No expired authorizations found.';
+  return [
+    `Revoked ${revokedAuthorizations.length} expired authorization(s), cancelling ${cancelledReservations.length} stuck reservation(s):`,
+    ...revokedAuthorizations.map((id) => `  ${id}`),
+  ].join('\n');
+}
+
 // ---- action --------------------------------------------------------------
 
 const ACTION_TYPES: ActionType[] = ['inference', 'paid_api', 'purchase', 'cloud_compute', 'human_approval', 'other'];
@@ -197,12 +210,14 @@ async function runAction(runtime: ScripRuntime, verb: string | undefined, args: 
   switch (verb) {
     case 'reserve':
       return runActionReserve(runtime, args);
+    case 'reserve-card':
+      return runActionReserveCard(runtime, args);
     case 'commit':
       return runActionCommit(runtime, args);
     case 'cancel':
       return runActionCancel(runtime, args);
     default:
-      throw new UsageError('Usage: scrip action <reserve|commit|cancel> ...');
+      throw new UsageError('Usage: scrip action <reserve|reserve-card|commit|cancel> ...');
   }
 }
 
@@ -226,6 +241,26 @@ function runActionReserve(runtime: ScripRuntime, args: string[]): string {
     `label: ${reservation.label}`,
     `maximumCost: $${reservation.maximumCost.toFixed(4)}`,
     `status: ${reservation.status}`,
+  ].join('\n');
+}
+
+async function runActionReserveCard(runtime: ScripRuntime, args: string[]): Promise<string> {
+  const [credential, label, maximumCostArg, merchant] = args;
+  if (!credential || !label || !maximumCostArg || !merchant) {
+    throw new UsageError('Usage: scrip action reserve-card <credential> <label> <maximumCost> <merchant>');
+  }
+  const maximumCost = Number(maximumCostArg);
+  if (Number.isNaN(maximumCost)) {
+    throw new UsageError(`maximumCost must be a number, got "${maximumCostArg}"`);
+  }
+
+  const reservation = await reserveCardPurchase(runtime, { credential, label, maximumCost, merchant });
+  return [
+    `reservationId: ${reservation.reservationId}`,
+    `label: ${reservation.label}`,
+    `maximumCost: $${reservation.maximumCost.toFixed(4)}`,
+    `status: ${reservation.status}`,
+    `card: ${reservation.card.cardId} (•••• ${reservation.card.last4}, ${reservation.card.state})`,
   ].join('\n');
 }
 

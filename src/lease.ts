@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
+import type { CardIssuer, IssuedCard } from './ramp-agent-card.js';
 import {
   computeCostBreakdown,
   type ActionType,
@@ -80,6 +81,11 @@ export interface TaskEvidenceSnapshot {
 
 export type EconomicActionStatus = 'reserved' | 'committed' | 'cancelled';
 
+/** An ActionReservation that also minted a real Ramp Agent Card - returned by reserveCardPurchase. */
+export interface CardPurchaseReservation extends ActionReservation {
+  card: IssuedCard;
+}
+
 export interface ActionReservation {
   reservationId: string;
   /** = reservationId. The pivot's canonical field name; both resolve the same reservation. */
@@ -155,7 +161,12 @@ export class TaskAuthorizationManager {
   // needed this). A CLI is a fresh process per invocation, so it opts in by
   // passing a storePath, the same JSON-file pattern LocalReceiptStore
   // already uses for settled receipts.
-  constructor(private config: ScripConfig, private ramp: RampGateway, private storePath?: string) {
+  constructor(
+    private config: ScripConfig,
+    private ramp: RampGateway,
+    private storePath?: string,
+    private cardIssuer?: CardIssuer
+  ) {
     if (this.storePath && fs.existsSync(this.storePath)) {
       this.load();
     }
@@ -350,6 +361,42 @@ export class TaskAuthorizationManager {
     this.reservations.set(reservation.reservationId, reservation);
     this.persist();
     return reservation;
+  }
+
+  /**
+   * Like reserveAction, but for a 'purchase' that needs a real payment
+   * instrument: also mints a single-use Ramp Agent Card capped at
+   * maximumCost via the injected CardIssuer. Plain reserveAction(...,
+   * 'purchase', ...) is unchanged and never mints a card - only this method
+   * does, so existing purchase-type callers that don't need a real card are
+   * unaffected.
+   */
+  async reserveCardPurchase(
+    credential: string,
+    label: string,
+    maximumCost: number,
+    options: { merchant: string }
+  ): Promise<CardPurchaseReservation> {
+    if (!this.cardIssuer) {
+      throw new Error(
+        'reserveCardPurchase requires a CardIssuer - pass one to TaskAuthorizationManager (see createCardIssuer in src/runtime.ts)'
+      );
+    }
+    const reservation = this.reserveAction(credential, 'purchase', label, maximumCost, { merchant: options.merchant });
+    let card: IssuedCard;
+    try {
+      card = await this.cardIssuer.issueCard({
+        displayName: label,
+        maximumAmountUsd: maximumCost,
+        merchant: options.merchant,
+      });
+    } catch (error) {
+      this.cancelAction(reservation.reservationId);
+      throw error;
+    }
+    reservation.metadata.card = card;
+    this.persist();
+    return { ...reservation, card };
   }
 
   commitAction(reservationId: string, actualCost: number, tokenUsage?: { inputTokens: number; outputTokens: number }): void {
@@ -549,6 +596,48 @@ export class TaskAuthorizationManager {
       .filter((lease) => lease.authorizationId === authorizationId)
       .forEach((lease) => (lease.status = 'revoked'));
     this.persist();
+  }
+
+  /**
+   * Crash-recovery / expiry-cleanup sweep. assertNotExpired only reacts when
+   * a caller touches an expired lease again - a task whose worker crashed or
+   * simply never returned leaves its authorization stuck 'active' forever,
+   * with any in-flight reservation's money stuck in `pending` and no caller
+   * left to cancel or settle it. Unlike revokeTask (which refuses to revoke
+   * anything with pending > 0, since a live caller might still resolve it),
+   * this only touches authorizations already past expiresAt: it cancels
+   * every reservation still 'reserved' under each one - releasing pending
+   * back through the normal cancelAction path - then marks the
+   * authorization and its leases 'revoked', the same terminal state
+   * assertNotExpired already puts a touched lease into. Intended to be
+   * invoked periodically (e.g. a cron running `scrip task sweep-expired`) -
+   * this method itself has no scheduler, since one already exists in every
+   * real deployment target (cron, a scheduled Lambda, etc.).
+   */
+  sweepExpired(now: Date = new Date()): { revokedAuthorizations: string[]; cancelledReservations: string[] } {
+    const nowMs = now.getTime();
+    const revokedAuthorizations: string[] = [];
+    const cancelledReservations: string[] = [];
+
+    for (const authorization of this.authorizations.values()) {
+      if (authorization.status !== 'active' || Date.parse(authorization.expiresAt) > nowMs) continue;
+
+      for (const reservation of this.reservations.values()) {
+        if (reservation.authorizationId === authorization.authorizationId && reservation.status === 'reserved') {
+          this.cancelAction(reservation.reservationId);
+          cancelledReservations.push(reservation.reservationId);
+        }
+      }
+
+      authorization.status = 'revoked';
+      [...this.leases.values()]
+        .filter((lease) => lease.authorizationId === authorization.authorizationId)
+        .forEach((lease) => (lease.status = 'revoked'));
+      revokedAuthorizations.push(authorization.authorizationId);
+    }
+
+    this.persist();
+    return { revokedAuthorizations, cancelledReservations };
   }
 
   private authenticate(credential: string): InternalLease {

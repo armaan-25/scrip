@@ -120,6 +120,35 @@ Useful for testing without creating a new Fund:
   `Meter` now always sends `meters: []` when there's nothing
   provider-specific to report.
 
+## Agent Cards (card issuance) - NOT yet live-verified
+
+`RampAgentCardIssuer` (`src/ramp-agent-card.ts`) mints a real single-use
+virtual card via what Ramp's published API reference describes as:
+
+- `POST /developer/v1/cards/deferred/virtual`, scope `cards:write` (a
+  separate scope/approval from `funds:read`/`ai_usage:write` - confirm it's
+  enabled on the "Scrip" app's Developer Console registration before
+  testing).
+- Async/deferred: the POST returns a task id; the real card (id, last4,
+  state) is only available by polling
+  `GET /developer/v1/cards/deferred/{task_id}` until it reports success.
+- Needs a real cardholder Ramp user (`RAMP_CARDHOLDER_USER_ID`) to issue
+  under - unlike Funds/AI Usage Tracking, this isn't just a Fund ID lookup.
+
+**Unlike every other integration in this file, none of this has been
+confirmed against a live response yet** - the exact field names
+(`spending_restrictions.amount`/`interval`, the deferred-task response
+shape) come from Ramp's documentation, not an observed real response.
+Run `npx tsx scripts/smoke-test-agent-card.ts` (mints one real $0.01 card
+against a `cards:write`-scoped sandbox app) and fix field names against
+whatever actually comes back before trusting this in a real purchase flow.
+
+Ramp's own Agent Card product also auto-locks a card to whichever merchant
+runs its first real transaction - there's no "lock to merchant X up front"
+request field confirmed in the docs, so `CardIssueRequest.merchant` is
+recorded on the reservation for our own audit trail only; it is not sent to
+Ramp as an enforced restriction.
+
 ## Known constraints
 
 - Vault / virtual-card issuance requires separate Ramp approval and PCI

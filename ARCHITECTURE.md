@@ -395,19 +395,40 @@ basically done":
   tested, it's just not plugged in yet.
 - **No idempotency-key support outside `PostgresTaskStore`** — the CLI,
   HTTP API, and MCP server have no retry-safety of their own.
-- **No expiry cleanup daemon, no crash recovery beyond what Postgres
-  transactions give for free.**
+- **No self-scheduling expiry-cleanup daemon.** `TaskAuthorizationManager.sweepExpired()`
+  (`scrip task sweep-expired`) closes the actual gap this used to describe -
+  a task whose worker crashed or never returned used to leave its
+  authorization `active` forever with its in-flight reservation's money
+  stuck in `pending`, unrecoverable by any caller. `sweepExpired()` cancels
+  every reservation still `reserved` under each authorization already past
+  `expiresAt`, releasing that `pending` amount through the normal
+  `cancelAction` path, then revokes the authorization and its leases -
+  unit-tested (`tests/lease.test.ts`) against a manually expired
+  authorization with a reservation stuck mid-flight. What's still missing
+  is only the *scheduling* - nothing in this repo invokes it periodically
+  yet; that's an external cron/scheduled-Lambda decision, same as
+  `PostgresTaskStore`'s live concurrency proof existing without being
+  wired into `TaskAuthorizationManager` as its backend.
 - **The HTTP API has no authentication/authorization layer** — by
   design, not oversight (see `src/interfaces/http/server.ts`'s own
   comment), but genuinely absent, so it isn't safe to expose publicly
   without one.
-- **The `Dockerfile` has not been through `docker build`** — no reachable
-  Docker daemon in this environment. The command it runs was verified
-  directly against the compiled `dist/` output; the container wrapper
-  around it was not.
-- **No Agent Card purchase flow / `TaskCostEstimator`** — scoped out
-  earlier as a separate, larger surface (real-time per-purchase spend,
-  not metered inference).
+- ~~**The `Dockerfile` has not been through `docker build`**~~ — closed
+  2026-08-01: a real Docker daemon became reachable, and both
+  `docker build` and `docker compose up --build` were run live. Found and
+  fixed a real bug in the process — see the Dockerfile's own comment on
+  the `/data` volume permission fix.
+- **`TaskCostEstimator` doesn't exist** — no pre-purchase cost-estimation
+  surface. `reserveCardPurchase()` (`src/ramp-agent-card.ts`,
+  `TaskAuthorizationManager.reserveCardPurchase`) closed the adjacent
+  "no Agent Card purchase flow" gap this used to describe: a `'purchase'`
+  reservation can now mint a real single-use Ramp Agent Card via
+  `RampAgentCardIssuer`, capped at the reservation's `maximumCost` — but
+  the exact request/response field names are NOT yet live-verified
+  against a real `cards:write`-scoped Ramp app (see
+  `docs/ramp-api-notes.md`'s "Agent Cards" section and
+  `scripts/smoke-test-agent-card.ts`). `MockCardIssuer` exercises the same
+  call path offline, including in `visuals/agent-card-live.html`.
 - **No MPP/x402 machine-payment rails.**
 - **Gemini or other model providers** — the `ModelProvider` interface
   supports adding them the same way `OpenAIProvider` was added, but only
