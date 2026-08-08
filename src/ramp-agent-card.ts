@@ -37,13 +37,15 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Mints a real single-use Ramp Agent Card via the deferred virtual-card task
- * endpoint (`POST /developer/v1/cards/deferred/virtual`, `cards:write`
- * scope). Unlike RampOAuthClient/RampApiGateway/Meter, this endpoint's exact
+ * endpoint (`POST /developer/v1/cards/deferred/virtual`, `cards:read_agentic`
+ * + `spend_limits:write` scopes - confirmed against Ramp's own current
+ * developer docs, corrected from an earlier `cards:write` guess). Unlike
+ * RampOAuthClient/RampApiGateway/Meter, this endpoint's exact
  * request/response field names have NOT been confirmed live against this
  * project's sandbox app the way OAuth/Funds/AI Usage Tracking were (see
  * docs/ramp-api-notes.md) - run scripts/smoke-test-agent-card.ts against a
- * real cards:write-scoped app before trusting the field names below in a
- * real purchase decision.
+ * real cards:read_agentic-scoped app before trusting the field names below
+ * in a real purchase decision.
  */
 export class RampAgentCardIssuer implements CardIssuer {
   private oauth: RampOAuthClient;
@@ -54,7 +56,7 @@ export class RampAgentCardIssuer implements CardIssuer {
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         tokenUrl: `${config.baseUrl}/developer/v1/token`,
-        scope: 'cards:write',
+        scope: 'cards:read_agentic spend_limits:write',
       },
       fetchFn
     );
@@ -109,7 +111,7 @@ export class RampAgentCardIssuer implements CardIssuer {
   }
 }
 
-/** Local, zero-network stand-in for RampAgentCardIssuer - used when no cards:write-scoped app is configured. Same role as MockRampGateway. */
+/** Local, zero-network stand-in for RampAgentCardIssuer - used when no cards:read_agentic-scoped app is configured. Same role as MockRampGateway. */
 export class MockCardIssuer implements CardIssuer {
   private counter = 0;
 

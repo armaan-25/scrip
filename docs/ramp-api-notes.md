@@ -125,10 +125,12 @@ Useful for testing without creating a new Fund:
 `RampAgentCardIssuer` (`src/ramp-agent-card.ts`) mints a real single-use
 virtual card via what Ramp's published API reference describes as:
 
-- `POST /developer/v1/cards/deferred/virtual`, scope `cards:write` (a
-  separate scope/approval from `funds:read`/`ai_usage:write` - confirm it's
-  enabled on the "Scrip" app's Developer Console registration before
-  testing).
+- `POST /developer/v1/cards/deferred/virtual`, scopes `cards:read_agentic`
+  and `spend_limits:write` (confirmed against Ramp's current developer docs
+  - corrected from an earlier `cards:write` guess, which was never a real
+  Ramp scope. Separate scope/approval from `funds:read`/`ai_usage:write` -
+  confirm both are enabled on the "Scrip" app's Developer Console
+  registration before testing).
 - Async/deferred: the POST returns a task id; the real card (id, last4,
   state) is only available by polling
   `GET /developer/v1/cards/deferred/{task_id}` until it reports success.
@@ -140,8 +142,9 @@ confirmed against a live response yet** - the exact field names
 (`spending_restrictions.amount`/`interval`, the deferred-task response
 shape) come from Ramp's documentation, not an observed real response.
 Run `npx tsx scripts/smoke-test-agent-card.ts` (mints one real $0.01 card
-against a `cards:write`-scoped sandbox app) and fix field names against
-whatever actually comes back before trusting this in a real purchase flow.
+against a `cards:read_agentic`+`spend_limits:write`-scoped sandbox app) and
+fix field names against whatever actually comes back before trusting this in
+a real purchase flow.
 
 Ramp's own Agent Card product also auto-locks a card to whichever merchant
 runs its first real transaction - there's no "lock to merchant X up front"

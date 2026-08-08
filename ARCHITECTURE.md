@@ -425,8 +425,8 @@ basically done":
   reservation can now mint a real single-use Ramp Agent Card via
   `RampAgentCardIssuer`, capped at the reservation's `maximumCost` — but
   the exact request/response field names are NOT yet live-verified
-  against a real `cards:write`-scoped Ramp app (see
-  `docs/ramp-api-notes.md`'s "Agent Cards" section and
+  against a real `cards:read_agentic`+`spend_limits:write`-scoped Ramp app
+  (see `docs/ramp-api-notes.md`'s "Agent Cards" section and
   `scripts/smoke-test-agent-card.ts`). `MockCardIssuer` exercises the same
   call path offline, including in `visuals/agent-card-live.html`.
 - **No MPP/x402 machine-payment rails.**
