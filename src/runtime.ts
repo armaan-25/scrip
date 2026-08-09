@@ -2,7 +2,7 @@ import { loadConfig, type RampBudgetConfig, type ScripConfig } from './config.js
 import { TaskAuthorizationManager } from './lease.js';
 import { Meter } from './meter.js';
 import { RampApiGateway } from './ramp-api-gateway.js';
-import { MockCardIssuer, RampAgentCardIssuer, type CardIssuer } from './ramp-agent-card.js';
+import { MockCardIssuer, RampAgentCardIssuer, RampCliCardIssuer, type CardIssuer } from './ramp-agent-card.js';
 import { BudgetRouter } from './router.js';
 import { MockRampGateway, type RampGateway } from './store.js';
 
@@ -30,12 +30,28 @@ export function createRampGateway(storePath: string, config: ScripConfig): RampG
 }
 
 /**
- * cards:write is a separate scope from funds:read/ai_usage:write (see
- * docs/ramp-api-notes.md), and card issuance additionally needs a real
- * cardholder Ramp user - so this only wires in the real issuer when
- * RAMP_CARDHOLDER_USER_ID is set, even if RAMP_CLIENT_ID/SECRET already are.
+ * Three possible card issuers, in preference order:
+ *
+ * 1. RampCliCardIssuer - mints a REAL Ramp Agent Card by shelling out to
+ *    the real `ramp-cli` binary, live-verified working. Opt in with
+ *    RAMP_CLI_BIN (e.g. "ramp", or an absolute path) - requires `ramp auth
+ *    login` already done interactively; this process never does that
+ *    itself. Preferred whenever set, since it's the only issuer here that
+ *    mints Ramp's actual Agent Cards product rather than an adjacent one.
+ * 2. RampAgentCardIssuer - mints a real Ramp *Vault API* card (a different,
+ *    non-agent Ramp product - see docs/ramp-api-notes.md) via direct REST
+ *    with client-credentials OAuth. Opt in with RAMP_CARDHOLDER_USER_ID.
+ * 3. MockCardIssuer - zero-network fallback, used when neither is set.
  */
 export function createCardIssuer(): CardIssuer {
+  const cliBin = process.env.RAMP_CLI_BIN;
+  if (cliBin) {
+    const baseUrl = process.env.RAMP_API_BASE_URL ?? 'https://demo-api.ramp.com';
+    const env = baseUrl.includes('demo-api') ? 'sandbox' : 'production';
+    console.log(`[ramp] using RampCliCardIssuer (${cliBin}, -e ${env})`);
+    return new RampCliCardIssuer({ cliBin, env });
+  }
+
   const clientId = process.env.RAMP_CLIENT_ID;
   const clientSecret = process.env.RAMP_CLIENT_SECRET;
   const cardholderUserId = process.env.RAMP_CARDHOLDER_USER_ID;
@@ -46,7 +62,7 @@ export function createCardIssuer(): CardIssuer {
     return new RampAgentCardIssuer({ clientId, clientSecret, baseUrl, cardholderUserId });
   }
 
-  console.log('[ramp] RAMP_CARDHOLDER_USER_ID not set, using MockCardIssuer');
+  console.log('[ramp] no RAMP_CLI_BIN or RAMP_CARDHOLDER_USER_ID set, using MockCardIssuer');
   return new MockCardIssuer();
 }
 

@@ -382,6 +382,14 @@ export class TaskAuthorizationManager {
         'reserveCardPurchase requires a CardIssuer - pass one to TaskAuthorizationManager (see createCardIssuer in src/runtime.ts)'
       );
     }
+    // Real Ramp Fund this card should draw from, so a CardIssuer that needs
+    // one (RampCliCardIssuer's `ramp funds creds <fundId>`) doesn't have to
+    // resolve budget config itself. RampAgentCardIssuer and MockCardIssuer
+    // both ignore it - only pull the budget lookup up front for the one
+    // implementation that actually needs it.
+    const lease = this.authenticate(credential);
+    const fundId = this.budget(this.getActiveAuthorization(lease.authorizationId).budgetName).rampFundId;
+
     const reservation = this.reserveAction(credential, 'purchase', label, maximumCost, { merchant: options.merchant });
     let card: IssuedCard;
     try {
@@ -389,6 +397,7 @@ export class TaskAuthorizationManager {
         displayName: label,
         maximumAmountUsd: maximumCost,
         merchant: options.merchant,
+        fundId,
       });
     } catch (error) {
       this.cancelAction(reservation.reservationId);

@@ -1,3 +1,4 @@
+import { getModelPrice } from './pricing.js';
 import { RampOAuthClient, type HttpFetch } from './ramp-oauth.js';
 import type { TaskReceipt } from './store.js';
 
@@ -38,7 +39,7 @@ export class Meter {
       event_id: `${receipt.receiptId}:${usage.model}`,
       source: this.config.source,
       occurred_at: receipt.settledAt,
-      provider: 'anthropic',
+      provider: getModelPrice(usage.model).provider,
       model: usage.model,
       usage: {
         input_tokens: usage.inputTokens,

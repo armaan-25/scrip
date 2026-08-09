@@ -120,37 +120,67 @@ Useful for testing without creating a new Fund:
   `Meter` now always sends `meters: []` when there's nothing
   provider-specific to report.
 
-## Agent Cards (card issuance) - NOT yet live-verified
+## Card issuance - Vault API cards vs. real Agent Cards
 
 `RampAgentCardIssuer` (`src/ramp-agent-card.ts`) mints a real single-use
-virtual card via what Ramp's published API reference describes as:
+Ramp card, but **not through Ramp's actual Agent Cards product** - that
+distinction took three real, live-verified rounds to nail down, in order:
 
-- `POST /developer/v1/cards/deferred/virtual`, scopes `cards:read_agentic`
-  and `spend_limits:write` (confirmed against Ramp's current developer docs
-  - corrected from an earlier `cards:write` guess, which was never a real
-  Ramp scope. Separate scope/approval from `funds:read`/`ai_usage:write` -
-  confirm both are enabled on the "Scrip" app's Developer Console
-  registration before testing).
-- Async/deferred: the POST returns a task id; the real card (id, last4,
-  state) is only available by polling
-  `GET /developer/v1/cards/deferred/{task_id}` until it reports success.
-- Needs a real cardholder Ramp user (`RAMP_CARDHOLDER_USER_ID`) to issue
-  under - unlike Funds/AI Usage Tracking, this isn't just a Fund ID lookup.
+**Round 1 - the endpoint didn't exist.** The original implementation called
+`POST /developer/v1/cards/deferred/virtual`, guessed from docs prose
+describing an "async, deferred" card-creation flow. Live testing got a real
+`403` naming a scope (`cards:write`) that isn't in Ramp's real scope list at
+all - which led to fetching Ramp's actual OpenAPI spec
+(`docs.ramp.com/openapi/developer-api.json`) directly and searching it for
+every path containing "card" or "deferred". **No `/cards/deferred/*` path
+exists anywhere in the real API.** The whole endpoint was fabricated from
+documentation prose, never verified against the spec.
 
-**Unlike every other integration in this file, none of this has been
-confirmed against a live response yet** - the exact field names
-(`spending_restrictions.amount`/`interval`, the deferred-task response
-shape) come from Ramp's documentation, not an observed real response.
-Run `npx tsx scripts/smoke-test-agent-card.ts` (mints one real $0.01 card
-against a `cards:read_agentic`+`spend_limits:write`-scoped sandbox app) and
-fix field names against whatever actually comes back before trusting this in
-a real purchase flow.
+**Round 2 - the real endpoint, wrong product.** The spec's actual card-vault
+path is `POST /developer/v1/cards/vault` (`cards:read_vault` +
+`limits:write` scopes), synchronous - a single `201` returns the full card
+(`pan`/`cvv`/`expiration`) directly, no polling. Rewrote against this and
+confirmed the token genuinely carries both scopes (Ramp's OAuth silently
+drops scopes an app isn't approved for - checked the token response's own
+`scope` field directly, not assumed). Every request still gets the same
+invariant `400 DEVELOPER_7098`, `"It's possible you are using the incorrect
+base URL for this request"` - identical whether the request body is fully
+populated or stripped to the one field the schema actually requires. A real
+scope-mismatch error looks different on this API (`403 DEVELOPER_7100`,
+names the missing scope explicitly - confirmed by deliberately calling an
+endpoint this token doesn't have permission for). That comparison is what
+rules out "we're sending something wrong" as the explanation.
 
-Ramp's own Agent Card product also auto-locks a card to whichever merchant
-runs its first real transaction - there's no "lock to merchant X up front"
-request field confirmed in the docs, so `CardIssueRequest.merchant` is
-recorded on the reservation for our own audit trail only; it is not sent to
-Ramp as an enforced restriction.
+**Round 3 - the real reason.** `docs.ramp.com/developer-api/v1/
+build-for-ai-agents` draws the line explicitly: *"Virtual cards — non-agent
+virtual cards (Vault API or embedded iframe) for human-driven flows"* is a
+separate product from Agent Cards. Real Agent Card issuance
+(`ramp_get_agent_card_creds` over MCP, or the CLI's `agentic-purchase`
+skill) is built on `https://api.ramp.com/agent-tools`, which the same page
+states plainly: *"These endpoints are not accessible to external clients."*
+**There is no direct client-credentials REST call any third-party app can
+make to mint a real Agent Card - not a missing scope, not a wrong URL, an
+architectural boundary.** Separately, Ramp's changelog (Feb 10 2026) also
+describes `/cards/vault` itself as gated to "vault API access holders," a
+business-level PCI-qualification entitlement above the OAuth scope layer -
+which is the more immediate reason the live calls above still 400. A
+support ticket referencing the exact error id/code is filed.
+
+**What this means for `RampAgentCardIssuer` going forward:** it's kept as a
+real integration against Ramp's real Vault API - same "single-use payment
+instrument capped at a reservation" shape `reserveCardPurchase()` needs -
+but it will never produce an actual Agent Card. A real Agent Card
+integration needs a genuinely different shape: either Scrip shelling out to
+the real `ramp-cli` binary as a subprocess, or Scrip acting as an MCP client
+against `https://mcp.ramp.com/mcp`. Neither is built. Run
+`npx tsx scripts/smoke-test-agent-card.ts` to re-check current live status
+against `/cards/vault` once the support ticket resolves.
+
+`CardIssueRequest.merchant` is recorded on the reservation for this
+project's own audit trail only - not confirmed whether the Vault API's
+`spending_restrictions` accepts an upfront merchant/vendor restriction
+(its request schema exposes `allowed_categories`, not an explicit merchant
+field, as far as this research went).
 
 ## Known constraints
 

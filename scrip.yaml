@@ -3,7 +3,13 @@ ramp_entity_id: ramp-entity-demo
 budgets:
   research:
     ramp_budget_id: ramp-budget-research
-    ramp_fund_id: cd1c33eb-d742-4d7e-850f-972eb3c3c53f
+    # Confirmed live 2026-08-08 via `ramp funds get-agent-card-funds` as one
+    # of five funds actually enrolled for agent card payments in this
+    # sandbox - the account's *other* seeded "Software" fund
+    # (cd1c33eb-d742-4d7e-850f-972eb3c3c53f, used until now for Fund-balance
+    # reads) is not agent-card-enrolled and fails RampCliCardIssuer with a
+    # real 400 ("This fund doesn't support agent card payments").
+    ramp_fund_id: 695e46a0-8193-4d67-91e3-1c8eb43ec9d9
     monthly_limit: 100
     max_task_allowance: 10
     allowed_models:

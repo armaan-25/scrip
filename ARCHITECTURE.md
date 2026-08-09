@@ -420,14 +420,19 @@ basically done":
   the `/data` volume permission fix.
 - **`TaskCostEstimator` doesn't exist** — no pre-purchase cost-estimation
   surface. `reserveCardPurchase()` (`src/ramp-agent-card.ts`,
-  `TaskAuthorizationManager.reserveCardPurchase`) closed the adjacent
-  "no Agent Card purchase flow" gap this used to describe: a `'purchase'`
-  reservation can now mint a real single-use Ramp Agent Card via
-  `RampAgentCardIssuer`, capped at the reservation's `maximumCost` — but
-  the exact request/response field names are NOT yet live-verified
-  against a real `cards:read_agentic`+`spend_limits:write`-scoped Ramp app
-  (see `docs/ramp-api-notes.md`'s "Agent Cards" section and
-  `scripts/smoke-test-agent-card.ts`). `MockCardIssuer` exercises the same
+  `TaskAuthorizationManager.reserveCardPurchase`) mints a real single-use
+  Ramp card via `RampAgentCardIssuer`, capped at the reservation's
+  `maximumCost` — but confirmed live testing found this can only ever be a
+  real **Vault API** card (`POST /developer/v1/cards/vault`), not a real
+  **Agent Card**. Ramp's own docs state Agent Card issuance is built on
+  `https://api.ramp.com/agent-tools`, explicitly "not accessible to
+  external clients" — no direct REST call a third-party app makes can mint
+  one; only Ramp's own MCP server or the official `ramp-cli` binary can.
+  Live Vault API calls are additionally blocked right now by an
+  account-level entitlement gate ("vault API access holders" per Ramp's
+  changelog) — a support ticket is filed. Full trail in
+  `docs/ramp-api-notes.md`'s "Card issuance" section and
+  `scripts/smoke-test-agent-card.ts`. `MockCardIssuer` exercises the same
   call path offline, including in `visuals/agent-card-live.html`.
 - **No MPP/x402 machine-payment rails.**
 - **Gemini or other model providers** — the `ModelProvider` interface

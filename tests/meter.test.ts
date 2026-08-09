@@ -90,6 +90,25 @@ describe('Meter', () => {
     expect(sonnetEvent.reported_cost).toMatchObject({ amount: '0.3', currency: 'USD', estimated: false });
   });
 
+  it('reports the real provider per model, not a hardcoded one', async () => {
+    const capture: { body?: unknown } = {};
+    const fetchFn = fakeFetch({ access_token: 'token-abc', expires_in: 3600 }, capture);
+    const meter = new Meter(config, fetchFn);
+
+    await meter.reportUsage(
+      receipt({
+        modelUsage: [
+          { model: 'claude-sonnet-5', requests: 1, inputTokens: 100, outputTokens: 50, cost: 0.3 },
+          { model: 'gpt-5.6-luna', requests: 1, inputTokens: 80, outputTokens: 40, cost: 0.2 },
+        ],
+      })
+    );
+
+    const body = capture.body as { events: any[] };
+    expect(body.events.find((e) => e.model === 'claude-sonnet-5')?.provider).toBe('anthropic');
+    expect(body.events.find((e) => e.model === 'gpt-5.6-luna')?.provider).toBe('openai');
+  });
+
   it('throws on a non-2xx response, including the response body for debugging', async () => {
     const fetchFn = vi.fn(async (url: string | URL) => {
       if (url.toString().includes('/token')) {

@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
-import { MockCardIssuer, RampAgentCardIssuer } from '../src/ramp-agent-card.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFile } from 'node:child_process';
+import { MockCardIssuer, RampAgentCardIssuer, RampCliCardIssuer } from '../src/ramp-agent-card.js';
 import type { HttpFetch } from '../src/ramp-oauth.js';
+
+vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
+const mockExecFile = vi.mocked(execFile);
 
 const config = {
   clientId: 'client-1',
@@ -21,30 +25,21 @@ function fakeFetch(responses: unknown[]) {
 }
 
 describe('RampAgentCardIssuer', () => {
-  it('mints a card once the deferred task reports success', async () => {
+  it('mints a card from a single synchronous Card Vault response', async () => {
     const fetchFn = fakeFetch([
       tokenResponse,
-      { id: 'task-1' },
-      { status: 'SUCCESS', card: { id: 'card-1', last4: '4242', state: 'ACTIVE' } },
+      { spend_limit_id: 'limit-1', card: { id: 'card-1', pan: '4403900918004242' } },
     ]);
     const issuer = new RampAgentCardIssuer(config, fetchFn);
 
     const card = await issuer.issueCard({ displayName: 'vendor license', maximumAmountUsd: 12.5, merchant: 'openai.com' });
 
     expect(card).toEqual({ cardId: 'card-1', last4: '4242', state: 'ACTIVE' });
-    const [, createInit] = fetchFn.mock.calls[1];
+    const [url, createInit] = fetchFn.mock.calls[1];
+    expect(url).toBe('https://demo-api.ramp.com/developer/v1/cards/vault');
     const requestBody = JSON.parse(String(createInit?.body));
     expect(requestBody.user_id).toBe('user-1');
-    expect(requestBody.spending_restrictions.amount).toBe(1250);
-  });
-
-  it('throws when the deferred task reports an error', async () => {
-    const fetchFn = fakeFetch([tokenResponse, { id: 'task-1' }, { status: 'ERROR' }]);
-    const issuer = new RampAgentCardIssuer(config, fetchFn);
-
-    await expect(
-      issuer.issueCard({ displayName: 'vendor license', maximumAmountUsd: 12.5, merchant: 'openai.com' })
-    ).rejects.toThrow(/failed/);
+    expect(requestBody.spending_restrictions).toEqual({ interval: 'TOTAL', limit: { amount: 1250, currency_code: 'USD' } });
   });
 
   it('throws when the create request itself fails', async () => {
@@ -52,13 +47,103 @@ describe('RampAgentCardIssuer', () => {
       if (String(init?.body ?? '').includes('grant_type')) {
         return { ok: true, status: 200, json: async () => tokenResponse } as Response;
       }
-      return { ok: false, status: 403, json: async () => ({ error: 'forbidden' }) } as Response;
+      return { ok: false, status: 403, text: async () => '{"error":"forbidden"}' } as Response;
     }) as unknown as HttpFetch;
     const issuer = new RampAgentCardIssuer(config, fetchFn);
 
     await expect(
       issuer.issueCard({ displayName: 'vendor license', maximumAmountUsd: 12.5, merchant: 'openai.com' })
     ).rejects.toThrow(/403/);
+  });
+});
+
+describe('RampCliCardIssuer', () => {
+  const cliConfig = { cliBin: 'ramp', env: 'sandbox' as const };
+
+  beforeEach(() => {
+    mockExecFile.mockReset();
+  });
+
+  it('mints a real card by shelling out to `ramp funds creds`', async () => {
+    mockExecFile.mockImplementation(((...callArgs: unknown[]) => {
+      const callback = callArgs[callArgs.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      const stdout = JSON.stringify({ data: [{ pan: '4111111111111111', cvv: '123' }] });
+      callback(null, stdout, '');
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const issuer = new RampCliCardIssuer(cliConfig);
+
+    const card = await issuer.issueCard({
+      displayName: 'vendor license',
+      maximumAmountUsd: 12.5,
+      merchant: 'openai.com',
+      fundId: 'fund-1',
+    });
+
+    expect(card.last4).toBe('1111');
+    expect(card.state).toBe('ACTIVE');
+    expect(card.cardId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const [command, args] = mockExecFile.mock.calls[0];
+    expect(command).toBe('ramp');
+    expect(args).toEqual([
+      '-e',
+      'sandbox',
+      '--agent',
+      'funds',
+      'creds',
+      'fund-1',
+      '--amount',
+      '12.50',
+      '--currency_code',
+      'USD',
+      '--merchant_country_code',
+      'US',
+      '--merchant_name',
+      'openai.com',
+      '--merchant_url',
+      'https://openai.com',
+      '--rationale',
+      'Scrip reservation: vendor license',
+    ]);
+  });
+
+  it('throws before ever shelling out when no fundId is given', async () => {
+    const issuer = new RampCliCardIssuer(cliConfig);
+
+    await expect(
+      issuer.issueCard({ displayName: 'vendor license', maximumAmountUsd: 12.5, merchant: 'openai.com' })
+    ).rejects.toThrow(/requires a fundId/);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('surfaces ramp-cli\'s real structured error message on failure', async () => {
+    mockExecFile.mockImplementation(((...callArgs: unknown[]) => {
+      const callback = callArgs[callArgs.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      const error = new Error('Command failed with exit code 2') as Error & { stdout?: string };
+      const stdout = JSON.stringify({ error: { code: 2, message: 'Missing required flags: --merchant_country_code' } });
+      error.stdout = stdout;
+      callback(error, stdout, '');
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const issuer = new RampCliCardIssuer(cliConfig);
+
+    await expect(
+      issuer.issueCard({ displayName: 'vendor license', maximumAmountUsd: 12.5, merchant: 'openai.com', fundId: 'fund-1' })
+    ).rejects.toThrow(/Missing required flags: --merchant_country_code/);
+  });
+
+  it('falls back to the raw error message when stdout is not real JSON', async () => {
+    mockExecFile.mockImplementation(((...callArgs: unknown[]) => {
+      const callback = callArgs[callArgs.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      callback(new Error('ENOENT: ramp binary not found'), '', '');
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const issuer = new RampCliCardIssuer(cliConfig);
+
+    await expect(
+      issuer.issueCard({ displayName: 'vendor license', maximumAmountUsd: 12.5, merchant: 'openai.com', fundId: 'fund-1' })
+    ).rejects.toThrow(/ENOENT: ramp binary not found/);
   });
 });
 

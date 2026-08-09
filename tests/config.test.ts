@@ -8,7 +8,7 @@ describe('loadConfig', () => {
     expect(config.rampEntityId).toBe('ramp-entity-demo');
     expect(config.budgets.research).toEqual({
       rampBudgetId: 'ramp-budget-research',
-      rampFundId: 'cd1c33eb-d742-4d7e-850f-972eb3c3c53f',
+      rampFundId: '695e46a0-8193-4d67-91e3-1c8eb43ec9d9',
       monthlyLimit: 100,
       maxTaskAllowance: 10,
       allowedModels: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
