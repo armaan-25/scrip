@@ -12,7 +12,8 @@
     "demo": "tsx demo/run-demo.ts",
     "demo:flagship": "tsx scripts/demo-flagship.ts",
     "http-server": "tsx bin/http-server.ts",
-    "visuals:agents": "tsx visuals/live-server.ts"
+    "visuals:agents": "tsx visuals/live-server.ts",
+    "visuals:card-real": "tsx visuals/agent-card-real-server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
