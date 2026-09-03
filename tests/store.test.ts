@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MockRampGateway, type TaskReceipt } from '../src/store.js';
+import { AgentTrackRecordStore, MockRampGateway, type LeaseSettlement, type TaskReceipt } from '../src/store.js';
 
 let tmpDir: string;
 let filePath: string;
@@ -63,5 +63,51 @@ describe('MockRampGateway', () => {
 
     expect((await ramp.getReceipt('auth-2'))?.receiptId).toBe('receipt-2');
     expect(await ramp.getReceipt('not-a-real-auth')).toBeUndefined();
+  });
+});
+
+function settlement(overrides: Partial<LeaseSettlement> = {}): LeaseSettlement {
+  return {
+    agentId: 'agent-a',
+    leaseId: 'lease-1',
+    authorizationId: 'auth-1',
+    outcome: 'success',
+    settledAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+describe('AgentTrackRecordStore', () => {
+  it('gives a full-trust resolve rate before any settlement is recorded', () => {
+    const store = new AgentTrackRecordStore(path.join(tmpDir, 'track-record.json'));
+    expect(store.getResolveRate('agent-a')).toEqual({ agentId: 'agent-a', resolved: 0, total: 0, rate: 1 });
+  });
+
+  it('counts success and partial as resolved, failure and unknown as not', () => {
+    const store = new AgentTrackRecordStore(path.join(tmpDir, 'track-record.json'));
+    store.addSettlement(settlement({ leaseId: 'l1', outcome: 'success' }));
+    store.addSettlement(settlement({ leaseId: 'l2', outcome: 'partial' }));
+    store.addSettlement(settlement({ leaseId: 'l3', outcome: 'failure' }));
+    store.addSettlement(settlement({ leaseId: 'l4', outcome: 'unknown' }));
+
+    expect(store.getResolveRate('agent-a')).toEqual({ agentId: 'agent-a', resolved: 2, total: 4, rate: 0.5 });
+  });
+
+  it('keeps resolve rates independent per agentId', () => {
+    const store = new AgentTrackRecordStore(path.join(tmpDir, 'track-record.json'));
+    store.addSettlement(settlement({ agentId: 'agent-a', leaseId: 'l1', outcome: 'success' }));
+    store.addSettlement(settlement({ agentId: 'agent-b', leaseId: 'l2', outcome: 'failure' }));
+
+    expect(store.getResolveRate('agent-a').rate).toBe(1);
+    expect(store.getResolveRate('agent-b').rate).toBe(0);
+  });
+
+  it('persists settlements across separate store instances pointed at the same file', () => {
+    const filePath = path.join(tmpDir, 'track-record.json');
+    const storeA = new AgentTrackRecordStore(filePath);
+    storeA.addSettlement(settlement({ leaseId: 'l1', outcome: 'success' }));
+
+    const storeB = new AgentTrackRecordStore(filePath);
+    expect(storeB.getResolveRate('agent-a')).toEqual({ agentId: 'agent-a', resolved: 1, total: 1, rate: 1 });
   });
 });

@@ -4,10 +4,12 @@ import path from 'node:path';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
 import type { CardIssuer, IssuedCard } from './ramp-agent-card.js';
+import type { ExecutedPayment, PaymentExecutor } from './payment-executor.js';
 import {
   computeCostBreakdown,
   type ActionType,
   type ActionUsage,
+  type AgentTrackRecordStore,
   type ModelUsage,
   type OutcomeEvidence,
   type RampGateway,
@@ -43,6 +45,8 @@ export interface InferenceLease {
   status: LeaseStatus;
   expiresAt: string;
   depth: number;
+  /** Only set by settleLease() - independent of the root task's own outcome on TaskReceipt. See settleLease(). */
+  outcome?: TaskOutcomeStatus;
 }
 
 export interface IssuedTaskAuthorization {
@@ -84,6 +88,11 @@ export type EconomicActionStatus = 'reserved' | 'committed' | 'cancelled';
 /** An ActionReservation that also minted a real Ramp Agent Card - returned by reserveCardPurchase. */
 export interface CardPurchaseReservation extends ActionReservation {
   card: IssuedCard;
+}
+
+/** An ActionReservation settled against a pre-funded wallet rail (e.g. x402) instead of a minted instrument - returned by reserveWalletPayment. */
+export interface WalletPaymentReservation extends ActionReservation {
+  payment: ExecutedPayment;
 }
 
 export interface ActionReservation {
@@ -165,7 +174,9 @@ export class TaskAuthorizationManager {
     private config: ScripConfig,
     private ramp: RampGateway,
     private storePath?: string,
-    private cardIssuer?: CardIssuer
+    private cardIssuer?: CardIssuer,
+    private trackRecord?: AgentTrackRecordStore,
+    private paymentExecutor?: PaymentExecutor
   ) {
     if (this.storePath && fs.existsSync(this.storePath)) {
       this.load();
@@ -304,6 +315,20 @@ export class TaskAuthorizationManager {
       );
     }
 
+    // Adaptive cap: an agentId with a poor settleLease() track record gets
+    // clamped to a smaller slice of what it asked for, not rejected outright
+    // - see minSettlementsForTrust/lowTrustResolveRateThreshold on
+    // RampBudgetConfig. Unproven agents (below minSettlementsForTrust) and
+    // budgets that don't configure this at all are unaffected.
+    let grantedAllowance = allowance;
+    if (this.trackRecord && budget.minSettlementsForTrust !== undefined) {
+      const track = this.trackRecord.getResolveRate(agentId);
+      const threshold = budget.lowTrustResolveRateThreshold ?? 0.5;
+      if (track.total >= budget.minSettlementsForTrust && track.rate < threshold) {
+        grantedAllowance = Math.max(minViableAllowance, allowance * track.rate);
+      }
+    }
+
     const credential = issueCredential();
     const requestedExpiry = new Date(Date.now() + (ttlMs ?? Date.parse(parent.expiresAt) - Date.now())).toISOString();
     const lease: InternalLease = {
@@ -311,7 +336,7 @@ export class TaskAuthorizationManager {
       authorizationId: parent.authorizationId,
       parentLeaseId: parent.leaseId,
       agentId,
-      allowance,
+      allowance: grantedAllowance,
       spent: 0,
       pending: 0,
       status: 'active',
@@ -406,6 +431,43 @@ export class TaskAuthorizationManager {
     reservation.metadata.card = card;
     this.persist();
     return { ...reservation, card };
+  }
+
+  /**
+   * Like reserveCardPurchase, but for a rail with no per-call ceiling of its
+   * own (e.g. a pre-funded x402 wallet - see payment-executor.ts). There is
+   * no instrument to mint and no fund to resolve: reserveAction()'s atomic
+   * math is the entire spend ceiling here, since the injected
+   * PaymentExecutor is never asked to enforce one and the rail underneath
+   * can't. If the executor's pay() throws, the reservation is cancelled the
+   * same way a failed card mint is - no partial state either way.
+   */
+  async reserveWalletPayment(
+    credential: string,
+    label: string,
+    maximumCost: number,
+    options: { merchant: string }
+  ): Promise<WalletPaymentReservation> {
+    if (!this.paymentExecutor) {
+      throw new Error(
+        'reserveWalletPayment requires a PaymentExecutor - pass one to TaskAuthorizationManager (see createPaymentExecutor in src/runtime.ts)'
+      );
+    }
+    const reservation = this.reserveAction(credential, 'purchase', label, maximumCost, { merchant: options.merchant });
+    let payment: ExecutedPayment;
+    try {
+      payment = await this.paymentExecutor.pay({
+        label,
+        maximumCost,
+        merchant: options.merchant,
+      });
+    } catch (error) {
+      this.cancelAction(reservation.reservationId);
+      throw error;
+    }
+    reservation.metadata.payment = payment;
+    this.persist();
+    return { ...reservation, payment };
   }
 
   commitAction(reservationId: string, actualCost: number, tokenUsage?: { inputTokens: number; outputTokens: number }): void {
@@ -505,6 +567,43 @@ export class TaskAuthorizationManager {
     await this.ramp.reportTaskUsage(receipt);
     this.persist();
     return receipt;
+  }
+
+  /**
+   * Settles one non-root lease's outcome independently of the root task's
+   * settleTask() - the root's outcome (on TaskReceipt) says whether the
+   * whole task succeeded; this says whether *this specific delegated agent*
+   * did. Two agents under the same task can settle differently: one that
+   * completed its slice and one that didn't. Recorded to trackRecord (if
+   * configured) so delegate() can consult the agentId's history on future,
+   * unrelated authorizations - see getResolveRate() and the adaptive cap in
+   * delegate().
+   *
+   * A lease can only be settled once, by whichever of settleLease() or the
+   * root's settleTask() runs first - settleTask() still marks every lease
+   * 'settled' for spend-accounting purposes, but leaves outcome alone if
+   * this already set it.
+   */
+  settleLease(leaseId: string, outcome: TaskOutcomeStatus): void {
+    const lease = this.leases.get(leaseId);
+    if (!lease) throw new Error(`No such lease ${leaseId}`);
+    if (!lease.parentLeaseId) {
+      throw new Error(`Lease ${leaseId} is a root lease - settle it via settleTask(), not settleLease()`);
+    }
+    if (lease.status !== 'active') {
+      throw new Error(`Cannot settle lease ${leaseId}: already ${lease.status}`);
+    }
+    if (lease.pending > 0) throw new Error(`Cannot settle lease ${leaseId} with requests in flight`);
+    lease.status = 'settled';
+    lease.outcome = outcome;
+    this.trackRecord?.addSettlement({
+      agentId: lease.agentId,
+      leaseId: lease.leaseId,
+      authorizationId: lease.authorizationId,
+      outcome,
+      settledAt: new Date().toISOString(),
+    });
+    this.persist();
   }
 
   /** Read-only, non-destructive - unlike settleTask(), doesn't close or settle anything. */

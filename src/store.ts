@@ -168,6 +168,69 @@ export class LocalReceiptStore {
   }
 }
 
+/** One settled lease's outcome, as recorded against its agentId - the unit AgentTrackRecordStore aggregates. */
+export interface LeaseSettlement {
+  agentId: string;
+  leaseId: string;
+  authorizationId: string;
+  outcome: TaskOutcomeStatus;
+  settledAt: string;
+}
+
+interface TrackRecordData {
+  settlements: LeaseSettlement[];
+}
+
+export interface ResolveRate {
+  agentId: string;
+  resolved: number;
+  total: number;
+  rate: number;
+}
+
+/**
+ * Per-agentId settlement history, independent of TaskReceipt (which records
+ * one outcome per root task, not per delegated agent - see settleLease() in
+ * lease.ts for where these entries come from). Same local JSON-file pattern
+ * as LocalReceiptStore, and deliberately a separate file: receipts are
+ * Ramp-reported financial records, this is Scrip's own trust signal and has
+ * no Ramp analog.
+ */
+export class AgentTrackRecordStore {
+  constructor(private filePath: string) {
+    if (!fs.existsSync(this.filePath)) {
+      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+      this.save({ settlements: [] });
+    }
+  }
+
+  private load(): TrackRecordData {
+    return JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
+  }
+
+  private save(data: TrackRecordData): void {
+    fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2) + '\n');
+  }
+
+  addSettlement(settlement: LeaseSettlement): void {
+    const data = this.load();
+    data.settlements.push(settlement);
+    this.save(data);
+  }
+
+  /** success/partial count as resolved; failure/unknown don't - mirrors settleTask()'s TaskOutcomeStatus values. */
+  getResolveRate(agentId: string): ResolveRate {
+    const settlements = this.load().settlements.filter((s) => s.agentId === agentId);
+    const resolved = settlements.filter((s) => s.outcome === 'success' || s.outcome === 'partial').length;
+    return {
+      agentId,
+      resolved,
+      total: settlements.length,
+      rate: settlements.length === 0 ? 1 : resolved / settlements.length,
+    };
+  }
+}
+
 /** Local Ramp boundary used by the demo. Replace this adapter, not the lease engine. */
 export class MockRampGateway implements RampGateway {
   private readonly store: LocalReceiptStore;

@@ -1,10 +1,12 @@
 import { loadConfig, type RampBudgetConfig, type ScripConfig } from './config.js';
 import { TaskAuthorizationManager } from './lease.js';
 import { Meter } from './meter.js';
+import { MockPaymentExecutor, type PaymentExecutor } from './payment-executor.js';
 import { RampApiGateway } from './ramp-api-gateway.js';
 import { MockCardIssuer, RampAgentCardIssuer, RampCliCardIssuer, type CardIssuer } from './ramp-agent-card.js';
+import { RampX402Executor } from './ramp-x402-gateway.js';
 import { BudgetRouter } from './router.js';
-import { MockRampGateway, type RampGateway } from './store.js';
+import { AgentTrackRecordStore, MockRampGateway, type RampGateway } from './store.js';
 
 export function createRampGateway(storePath: string, config: ScripConfig): RampGateway {
   const clientId = process.env.RAMP_CLIENT_ID;
@@ -66,16 +68,57 @@ export function createCardIssuer(): CardIssuer {
   return new MockCardIssuer();
 }
 
+/**
+ * PaymentExecutor for rails with no per-call ceiling of their own (see
+ * payment-executor.ts) - e.g. Ramp's x402-managed Solana wallet (`ramp
+ * x402 fund` / `ramp x402 pay`, confirmed against Ramp's real
+ * ramp-setup-x402-wallet / ramp-make-x402-payment skills).
+ *
+ * Same RAMP_CLI_BIN opt-in as createCardIssuer() - both shell out to the
+ * same `ramp` binary, just different subcommands (`x402 pay` vs `funds
+ * creds`). Requires the wallet already provisioned and funded via `ramp
+ * x402 fund` (not done by this process, same externally-authenticated
+ * pattern as `ramp auth login` for RampCliCardIssuer) - RampX402Executor
+ * will surface the rail's own error if the wallet isn't funded, it doesn't
+ * fund it itself.
+ */
+export function createPaymentExecutor(): PaymentExecutor {
+  const cliBin = process.env.RAMP_CLI_BIN;
+  if (cliBin) {
+    const baseUrl = process.env.RAMP_API_BASE_URL ?? 'https://demo-api.ramp.com';
+    const env = baseUrl.includes('demo-api') ? 'sandbox' : 'production';
+    console.log(`[ramp] using RampX402Executor (${cliBin}, -e ${env})`);
+    return new RampX402Executor({ cliBin, env });
+  }
+
+  console.log('[ramp] no RAMP_CLI_BIN set, using MockPaymentExecutor');
+  return new MockPaymentExecutor();
+}
+
 export class ScripRuntime {
   readonly config: ScripConfig;
   readonly ramp: RampGateway;
   readonly authorizations: TaskAuthorizationManager;
   readonly router = new BudgetRouter();
 
-  constructor(configPath: string, storePath: string, ramp?: RampGateway, leaseStorePath?: string) {
+  constructor(
+    configPath: string,
+    storePath: string,
+    ramp?: RampGateway,
+    leaseStorePath?: string,
+    trackRecordStorePath?: string
+  ) {
     this.config = loadConfig(configPath);
     this.ramp = ramp ?? createRampGateway(storePath, this.config);
-    this.authorizations = new TaskAuthorizationManager(this.config, this.ramp, leaseStorePath, createCardIssuer());
+    const trackRecord = trackRecordStorePath ? new AgentTrackRecordStore(trackRecordStorePath) : undefined;
+    this.authorizations = new TaskAuthorizationManager(
+      this.config,
+      this.ramp,
+      leaseStorePath,
+      createCardIssuer(),
+      trackRecord,
+      createPaymentExecutor()
+    );
   }
 
   getBudget(name: string): RampBudgetConfig {

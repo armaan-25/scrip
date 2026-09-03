@@ -22,6 +22,12 @@ budgets:
     max_delegation_depth: 3
     min_request_input_tokens: 500
     min_request_output_tokens: 200
+    # Adaptive delegation cap (see settleLease()/getResolveRate() in
+    # lease.ts and store.ts): an agentId needs at least 3 settled leases
+    # before its resolve rate affects new delegate() calls, and only below a
+    # 50% resolve rate does delegate() start clamping the requested amount.
+    min_settlements_for_trust: 3
+    low_trust_resolve_rate_threshold: 0.5
   support:
     ramp_budget_id: ramp-budget-support
     monthly_limit: 250

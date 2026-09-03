@@ -18,6 +18,21 @@ export interface RampBudgetConfig {
   minRequestInputTokens: number;
   minRequestOutputTokens: number;
   controllerModel?: string;
+  /**
+   * How many of an agentId's past settleLease() outcomes to require before
+   * its resolve rate affects new delegate() calls - below this, an agent is
+   * "unproven" rather than "untrusted" and gets the full requested amount.
+   * Optional: undefined disables the adaptive cap for this budget entirely
+   * (existing scrip.yaml configs keep today's behavior unchanged).
+   */
+  minSettlementsForTrust?: number;
+  /**
+   * Below this resolve rate (once minSettlementsForTrust is met), delegate()
+   * clamps the requested allowance to requested * resolveRate instead of
+   * rejecting outright - a struggling agent gets a smaller slice next time,
+   * not a hard cutoff. See delegate() in lease.ts.
+   */
+  lowTrustResolveRateThreshold?: number;
 }
 
 export interface ScripConfig {
@@ -92,6 +107,8 @@ interface RawBudget {
   min_request_input_tokens: number;
   min_request_output_tokens: number;
   controller_model?: string;
+  min_settlements_for_trust?: number;
+  low_trust_resolve_rate_threshold?: number;
 }
 
 interface RawConfig {
@@ -134,6 +151,8 @@ export function loadConfig(filePath: string): ScripConfig {
       minRequestInputTokens: budget.min_request_input_tokens,
       minRequestOutputTokens: budget.min_request_output_tokens,
       controllerModel: budget.controller_model,
+      minSettlementsForTrust: budget.min_settlements_for_trust,
+      lowTrustResolveRateThreshold: budget.low_trust_resolve_rate_threshold,
     };
   }
 

@@ -19,7 +19,15 @@ describe('loadConfig', () => {
       maxDelegationDepth: 3,
       minRequestInputTokens: 500,
       minRequestOutputTokens: 200,
+      minSettlementsForTrust: 3,
+      lowTrustResolveRateThreshold: 0.5,
     });
+  });
+
+  it('leaves the adaptive delegation cap undefined for budgets that do not configure it', () => {
+    const config = loadConfig('scrip.yaml');
+    expect(config.budgets.support.minSettlementsForTrust).toBeUndefined();
+    expect(config.budgets.support.lowTrustResolveRateThreshold).toBeUndefined();
   });
 
   it('leaves rampFundId undefined when not configured', () => {
