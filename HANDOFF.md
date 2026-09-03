@@ -1,8 +1,8 @@
 # Handoff: Scrip — agent-to-agent spend authorization
 
-**Written:** 2026-09-02
-**Branch:** `main`, all changes below are uncommitted in the working tree
-**Verification gate:** none exists (`.claude/checks.sh` is absent) — the only proof this repo has of correctness is `npx tsc --noEmit` and `npm test`, both passing (170/170, 8 skipped — the 8 are Postgres-integration tests that need a local DB running)
+**Written:** 2026-09-02, updated 2026-09-03
+**Branch:** `main`, HEAD is `99066dd` ("Add resolve-rate adaptive delegation caps and a real x402 payment executor") — **everything described below is committed**, not sitting in the working tree. `git status` is clean except two pre-existing, unrelated items not owned by this work: `.claude/worktrees/agent-credit/` (a separate exploration branch from before this session) and `SKILL.md` (repo-root skill descriptor, pre-existing). Don't fold either into anything you do.
+**Verification gate:** none exists (`.claude/checks.sh` is absent) — the only proof this repo has of correctness is `npx tsc --noEmit` and `npm test`, both passing (170/170, 8 skipped — the 8 are Postgres-integration tests that need a local DB running). Re-confirmed clean as of 2026-09-03.
 
 ## What this project is
 
@@ -66,8 +66,31 @@ Wired into `src/runtime.ts`'s `createPaymentExecutor()` with the same `RAMP_CLI_
 - Tests mock `node:child_process`'s `execFile` via `vi.mock` + `vi.mocked`, with `mockExecFile.mockReset()` in `beforeEach` — a prior session hit real test-pollution bugs from a shared mock not being reset; keep doing this.
 - Config additions (like `minSettlementsForTrust`) are optional on `RampBudgetConfig`, defaulting to "feature off," so existing `scrip.yaml` budgets that don't opt in are unaffected. Keep new features additive this way.
 
+## Ramp's "AI spend value" / semantic layer posts (read in depth 2026-09-03, don't re-derive)
+
+The user surfaced a Ramp Labs tweet about an internal "semantic layer" attributing AI agent spend to objectives/outcomes, asking whether Scrip should adapt to it. Two posts were fetched and read directly (not just summarized from the tweet):
+
+- **`builders.ramp.com/post/ai-spend-value`** — "You're Spending Too Much on AI. You're Also Using Too Little." Business-philosophy piece, not a technical spec. Says to "translate spend into units of work" but gives no schema, no attribution algorithm, no outcome verification — defers to their AI Token Spend Management product instead of explaining the mechanism.
+- **`builders.ramp.com/post/ai-token-spend-management`** — the real technical post. Pipeline: LiteLLM/OpenRouter → Kafka → ClickHouse, `ReplacingMergeTree` for exactly-once event dedup, per-token cost precision, attribution via `user_id`/`team_id`/manually-injected metadata tags (`project`, `environment`) and a use-case taxonomy (`code-generation`, `summarization`, etc.).
+
+**Verdict, already given to the user, don't re-litigate without new evidence:** this is a categorization/analytics layer, not a proof-of-work layer. It has no mechanism linking a spend event to a *verified* outcome — the tags driving all its "type of work" attribution are self-reported by developers with no enforcement mentioned anywhere. Scrip's `settleLease()` + `OutcomeVerifier` + resolve-rate mechanism already does the harder thing this system doesn't attempt: gating trust on verified outcomes, not self-reported tags. **Adapting Scrip toward Ramp's model would be a step backward on rigor.** The one thing worth borrowing, if anything, is narrower: their observability-pipeline pattern (structured event log, exactly-once semantics) as a way to make Scrip's existing receipts more queryable — additive, not a redesign of how outcomes get proven.
+
+## Three candidate next-project ideas (ranked 2026-09-03, evaluated fresh, not vs. Scrip's current state)
+
+The user proposed three ideas for what to build next (explicitly as separate/fresh ideas, not a revival of the "financial sandbox" design doc mentioned below):
+
+1. **Agent financial sandbox** (human gives an agent one task/budget/merchants/expiry, replayable receipts, build with fake money first) — real merit, but least differentiated: it's substantially the same primitives already in `TaskAuthorizationManager` repackaged as a standalone product spec. Lower marginal learning unless the goal shifts to packaging/productizing rather than new mechanism.
+2. **Agent runtime debugger** (replay a run, show where money/latency/tool-calls/quality went wrong — the Wafer/Vals/Blacksmith-adjacent space) — assessed as the most interesting: genuinely different territory (observability/causality-reconstruction, not authorization), different data model (traces/spans, not budgets/leases).
+3. **Agent "black box" recorder** (capture browser state/tool calls/screenshots/approvals for reproducing failed real-world tasks) — assessed as a *subset* of #2, not a separate project; it's #2's data-capture layer without the analysis layer.
+
+**Recommendation given, not yet acted on:** build #2, with #3 as its first slice (capture before analysis). #1 has merit but risks being "redo what's already built, under a new name." No code has been written for any of these three — this is pure evaluation, nothing to extend from yet.
+
+## Known environment constraint (2026-09-03)
+
+This session has no working browser-automation/computer-use tool, despite the user enabling a "Computer-use MCP Server" mid-session (confirmed connected via their local `/mcp` terminal view, 24 tools reported). Repeated `ToolSearch` calls for browser/computer/screenshot/click-shaped tools returned nothing, even after the user reconnected it. Working theory: MCP tool attachment happens at session start, not hot-reloaded mid-session — a fresh `claude` session in this repo may pick it up, but this session never did. **Do not assume a browser/computer-use tool is available without checking `ToolSearch` fresh** — and if it's still absent, ask the user to paste text/screenshots directly (this worked fine for reading two X/Twitter posts this session; `WebFetch` cannot reach x.com at all, it returns a generic HTTP 402 block).
+
 ## Immediate open questions for whoever picks this up
 
 1. Does the user want `RampX402Executor` proven live (real wallet funding, real USDC movement)? Needs explicit go-ahead — don't do it unprompted.
-2. Is there a next feature to build, or is the priority now committing/cleaning up the 16 uncommitted files sitting in the working tree?
+2. Nothing is uncommitted anymore — the "clean up the working tree" question from the prior version of this doc is resolved. The next real question is which of the three ranked ideas above (if any) to actually start, or whether to keep extending the current Ramp-specific direction (e.g. proving `RampX402Executor` live).
 3. The user has been going back and forth between "build this as real infrastructure" and "this is a portfolio piece, don't over-scope it" — read the room before starting anything that takes more than an hour or two.
