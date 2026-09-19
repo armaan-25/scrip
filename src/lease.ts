@@ -9,6 +9,7 @@ import {
   computeCostBreakdown,
   type ActionType,
   type ActionUsage,
+  type CostBreakdown,
   type AgentTrackRecordStore,
   type ModelUsage,
   type OutcomeEvidence,
@@ -71,6 +72,70 @@ export interface IssuedChildLease {
   credential: string;
 }
 
+/**
+ * One node in a reconstructed run - a single lease plus the work attributed
+ * to it and the sub-agents it delegated to.
+ *
+ * `spent` is authoritative (maintained by commitAction against the lease
+ * itself). `costs`/`actionCount` are attributed from ActionEvents carrying
+ * this node's leaseId, so they cover only events recorded since ActionEvent
+ * gained that field - see `attributedCost` vs `spent` on RunReconstruction.
+ */
+export interface RunNode {
+  leaseId: string;
+  agentId: string;
+  parentLeaseId?: string;
+  depth: number;
+  status: LeaseStatus;
+  /** Per-agent outcome from settleLease(), independent of the run's own. */
+  outcome?: TaskOutcomeStatus;
+  allowance: number;
+  /** This node's own spend, excluding descendants. */
+  spent: number;
+  /** This node's spend plus every descendant's - what the subtree cost. */
+  subtreeSpent: number;
+  /** Action-type breakdown for this node alone, from its own ActionEvents. */
+  costs: CostBreakdown;
+  /** Committed actions attributed to this node alone. */
+  actionCount: number;
+  children: RunNode[];
+}
+
+/**
+ * A complete run: the whole delegation tree under one authorization, with
+ * cost attributed per node.
+ *
+ * Ramp's semantic-layer pipeline (builders.ramp.com/post/ai-token-spend-management)
+ * has to *infer* this shape - it reconstructs a session family by following
+ * parentage across sessions, then splits the run's cost evenly across the
+ * categories it finds, because it cannot attribute spend below run level.
+ * Scrip does not infer either one: `parentLeaseId` is declared at delegate()
+ * time, and every lease carries its own allowance/spent/outcome, so cost
+ * attribution here is exact rather than apportioned.
+ */
+export interface RunReconstruction {
+  authorizationId: string;
+  taskId: string;
+  task: string;
+  status: AuthorizationStatus;
+  /** Authorization-level totals - authoritative, always exact. */
+  authorized: number;
+  totalSpent: number;
+  /** Nodes in the tree, including the root lease. */
+  nodeCount: number;
+  /** Deepest delegation level reached; 0 when nothing was delegated. */
+  maxDepth: number;
+  /**
+   * Spend attributable to specific nodes. Equals totalSpent unless the run
+   * contains ActionEvents predating ActionEvent.leaseId, whose cost lands in
+   * `unattributedCost` instead.
+   */
+  attributedCost: number;
+  /** Committed spend that named no lease - see attributedCost. */
+  unattributedCost: number;
+  root: RunNode;
+}
+
 export interface TaskEvidenceSnapshot {
   task: string;
   allowance: number;
@@ -127,6 +192,13 @@ interface ActionEvent {
   cost: number;
   inputTokens?: number;
   outputTokens?: number;
+  /**
+   * Which lease incurred this action. Optional because ActionEvent is
+   * persisted in PersistedLeaseState - events written before this field
+   * existed have no leaseId, and getRunReconstruction() attributes those
+   * to the run rather than to a node. New events always set it.
+   */
+  leaseId?: string;
 }
 
 interface InternalLease extends InferenceLease {
@@ -134,11 +206,16 @@ interface InternalLease extends InferenceLease {
 }
 
 /** On-disk shape for optional cross-process persistence - see storePath on TaskAuthorizationManager. */
-interface PersistedLeaseState {
+export interface PersistedLeaseState {
   authorizations: TaskAuthorization[];
   leases: (Omit<InternalLease, 'credentialHash'> & { credentialHash: string })[];
   reservations: ActionReservation[];
   usage: Record<string, ActionEvent[]>;
+}
+
+export interface LeaseStateStore {
+  load(): PersistedLeaseState | undefined;
+  save(state: PersistedLeaseState): void;
 }
 
 export class SpendLimitExceededError extends Error {}
@@ -176,15 +253,19 @@ export class TaskAuthorizationManager {
     private storePath?: string,
     private cardIssuer?: CardIssuer,
     private trackRecord?: AgentTrackRecordStore,
-    private paymentExecutor?: PaymentExecutor
+    private paymentExecutor?: PaymentExecutor,
+    private stateStore?: LeaseStateStore
   ) {
-    if (this.storePath && fs.existsSync(this.storePath)) {
+    if (this.stateStore || (this.storePath && fs.existsSync(this.storePath))) {
       this.load();
     }
   }
 
   private load(): void {
-    const data: PersistedLeaseState = JSON.parse(fs.readFileSync(this.storePath!, 'utf-8'));
+    const data: PersistedLeaseState | undefined = this.stateStore
+      ? this.stateStore.load()
+      : JSON.parse(fs.readFileSync(this.storePath!, 'utf-8'));
+    if (!data) return;
     this.authorizations = new Map(data.authorizations.map((a) => [a.authorizationId, a]));
     this.leases = new Map(
       data.leases.map((l) => [l.leaseId, { ...l, credentialHash: Buffer.from(l.credentialHash, 'base64') }])
@@ -194,15 +275,19 @@ export class TaskAuthorizationManager {
   }
 
   private persist(): void {
-    if (!this.storePath) return;
+    if (!this.storePath && !this.stateStore) return;
     const data: PersistedLeaseState = {
       authorizations: [...this.authorizations.values()],
       leases: [...this.leases.values()].map((l) => ({ ...l, credentialHash: l.credentialHash.toString('base64') })),
       reservations: [...this.reservations.values()],
       usage: Object.fromEntries(this.usage),
     };
-    fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
-    fs.writeFileSync(this.storePath, JSON.stringify(data, null, 2) + '\n');
+    if (this.stateStore) {
+      this.stateStore.save(data);
+      return;
+    }
+    fs.mkdirSync(path.dirname(this.storePath!), { recursive: true });
+    fs.writeFileSync(this.storePath!, JSON.stringify(data, null, 2) + '\n');
   }
 
   private budget(name: string): RampBudgetConfig {
@@ -491,6 +576,7 @@ export class TaskAuthorizationManager {
       cost: actualCost,
       inputTokens: tokenUsage?.inputTokens,
       outputTokens: tokenUsage?.outputTokens,
+      leaseId: reservation.leaseId,
     });
     this.reservations.delete(reservationId);
     this.persist();
@@ -664,6 +750,85 @@ export class TaskAuthorizationManager {
       .map((lease) => this.publicLease(lease));
   }
 
+  /**
+   * Reconstructs the complete run under one authorization: the delegation
+   * tree, with each node's own spend, its subtree's spend, and its own
+   * action-type breakdown.
+   *
+   * Read-only and non-destructive, like getEvidenceSnapshot() - it settles
+   * and closes nothing, so it is safe to call on an active run.
+   *
+   * Unlike getLeaseTree(), which returns a flat depth-sorted list, this
+   * returns the nested structure with cost attached, which is what makes a
+   * run answerable at the sub-agent level: "the root held only a fifth of
+   * this run's spend; both merged results came from children."
+   */
+  getRunReconstruction(authorizationId: string): RunReconstruction {
+    const authorization = this.authorizations.get(authorizationId);
+    if (!authorization) throw new Error(`No such task authorization ${authorizationId}`);
+
+    const leases = [...this.leases.values()].filter((lease) => lease.authorizationId === authorizationId);
+    const root = leases.find((lease) => !lease.parentLeaseId);
+    if (!root) throw new Error(`Task authorization ${authorizationId} has no root lease`);
+
+    // Attribute each committed action to the lease that incurred it. Events
+    // predating ActionEvent.leaseId have none and are counted at run level.
+    const events = this.usage.get(authorizationId) ?? [];
+    const eventsByLease = new Map<string, ActionEvent[]>();
+    let unattributedCost = 0;
+    for (const event of events) {
+      if (!event.leaseId) {
+        unattributedCost += event.cost;
+        continue;
+      }
+      const forLease = eventsByLease.get(event.leaseId) ?? [];
+      forLease.push(event);
+      eventsByLease.set(event.leaseId, forLease);
+    }
+
+    const childrenByParent = new Map<string, InternalLease[]>();
+    for (const lease of leases) {
+      if (!lease.parentLeaseId) continue;
+      const siblings = childrenByParent.get(lease.parentLeaseId) ?? [];
+      siblings.push(lease);
+      childrenByParent.set(lease.parentLeaseId, siblings);
+    }
+
+    const build = (lease: InternalLease): RunNode => {
+      const own = eventsByLease.get(lease.leaseId) ?? [];
+      const children = (childrenByParent.get(lease.leaseId) ?? []).map(build);
+      return {
+        leaseId: lease.leaseId,
+        agentId: lease.agentId,
+        parentLeaseId: lease.parentLeaseId,
+        depth: lease.depth,
+        status: lease.status,
+        outcome: lease.outcome,
+        allowance: lease.allowance,
+        spent: lease.spent,
+        subtreeSpent: lease.spent + children.reduce((total, child) => total + child.subtreeSpent, 0),
+        costs: computeCostBreakdown(this.aggregateUsage(own).actionUsage),
+        actionCount: own.length,
+        children,
+      };
+    };
+
+    const tree = build(root);
+    return {
+      authorizationId,
+      taskId: authorization.taskId,
+      task: authorization.task,
+      status: authorization.status,
+      authorized: authorization.allowance,
+      totalSpent: authorization.spent,
+      nodeCount: leases.length,
+      maxDepth: leases.reduce((deepest, lease) => Math.max(deepest, lease.depth), 0),
+      attributedCost: events.reduce((total, event) => total + (event.leaseId ? event.cost : 0), 0),
+      unattributedCost,
+      root: tree,
+    };
+  }
+
   /** Shared by settleTask() and getEvidenceSnapshot(): modelUsage is inference-only (token-level detail); actionUsage rolls up every action type, inference included. */
   private aggregateUsage(events: ActionEvent[]): { modelUsage: ModelUsage[]; actionUsage: ActionUsage[] } {
     const byModel = new Map<string, ModelUsage>();
@@ -696,9 +861,9 @@ export class TaskAuthorizationManager {
     return { modelUsage: [...byModel.values()], actionUsage: [...byActionType.values()] };
   }
 
-  revokeTask(authorizationId: string): void {
+  revokeTask(authorizationId: string, options: { preservePending?: boolean } = {}): void {
     const authorization = this.getActiveAuthorization(authorizationId);
-    if (authorization.pending > 0) throw new Error('Cannot revoke a task with requests in flight');
+    if (authorization.pending > 0 && !options.preservePending) throw new Error('Cannot revoke a task with requests in flight');
     authorization.status = 'revoked';
     [...this.leases.values()]
       .filter((lease) => lease.authorizationId === authorizationId)

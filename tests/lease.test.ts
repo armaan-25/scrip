@@ -587,3 +587,127 @@ describe('reserveWalletPayment', () => {
     expect(lease.spent).toBe(0);
   });
 });
+
+describe('getRunReconstruction', () => {
+  it('reconstructs a multi-level delegation tree with per-node cost attribution', async () => {
+    const root = await authorize(5);
+    // Shape mirrors Ramp's funding-recommendation example: the root
+    // coordinates but holds a minority of spend; children do the work.
+    const backend = manager.delegate(root.credential, 'backend-fix', 2);
+    const frontend = manager.delegate(root.credential, 'frontend-migration', 1.5);
+    const audit = manager.delegate(backend.credential, 'caller-audit', 0.5);
+
+    const rootAction = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    manager.commitRequest(rootAction.reservationId, 100, 50, 0.2);
+    const backendAction = manager.reserveRequest(backend.credential, 'claude-sonnet-5', 1);
+    manager.commitRequest(backendAction.reservationId, 400, 200, 0.9);
+    const frontendAction = manager.reserveAction(frontend.credential, 'paid_api', 'exa_search', 0.5);
+    manager.commitAction(frontendAction.reservationId, 0.4);
+    const auditAction = manager.reserveRequest(audit.credential, 'claude-sonnet-5', 0.3);
+    manager.commitRequest(auditAction.reservationId, 50, 25, 0.25);
+
+    const run = manager.getRunReconstruction(root.authorization.authorizationId);
+
+    expect(run.nodeCount).toBe(4);
+    expect(run.maxDepth).toBe(2);
+    expect(run.totalSpent).toBeCloseTo(1.75);
+    expect(run.attributedCost).toBeCloseTo(1.75);
+    expect(run.unattributedCost).toBe(0);
+
+    // The root's own spend is a minority of the run it coordinated.
+    expect(run.root.spent).toBeCloseTo(0.2);
+    expect(run.root.subtreeSpent).toBeCloseTo(1.75);
+    expect(run.root.agentId).toBe(root.lease.agentId);
+
+    const byAgent = Object.fromEntries(run.root.children.map((child) => [child.agentId, child]));
+    expect(Object.keys(byAgent).sort()).toEqual(['backend-fix', 'frontend-migration']);
+
+    // Per-node action-type attribution, not a run-wide split.
+    expect(byAgent['frontend-migration'].costs.paidApiUsd).toBeCloseTo(0.4);
+    expect(byAgent['frontend-migration'].costs.inferenceUsd).toBe(0);
+    expect(byAgent['backend-fix'].costs.inferenceUsd).toBeCloseTo(0.9);
+    expect(byAgent['backend-fix'].costs.paidApiUsd).toBe(0);
+    expect(byAgent['backend-fix'].actionCount).toBe(1);
+
+    // A grandchild rolls into its parent's subtree but not the parent's own spend.
+    const grandchild = byAgent['backend-fix'].children[0];
+    expect(grandchild.agentId).toBe('caller-audit');
+    expect(grandchild.depth).toBe(2);
+    expect(byAgent['backend-fix'].spent).toBeCloseTo(0.9);
+    expect(byAgent['backend-fix'].subtreeSpent).toBeCloseTo(1.15);
+  });
+
+  it('carries each delegated agent\'s own settled outcome onto its node', async () => {
+    const root = await authorize(2);
+    const good = manager.delegate(root.credential, 'delivered', 0.5);
+    const bad = manager.delegate(root.credential, 'gave-up', 0.5);
+    manager.settleLease(good.lease.leaseId, 'success');
+    manager.settleLease(bad.lease.leaseId, 'failure');
+
+    const run = manager.getRunReconstruction(root.authorization.authorizationId);
+    const byAgent = Object.fromEntries(run.root.children.map((child) => [child.agentId, child]));
+    expect(byAgent['delivered'].outcome).toBe('success');
+    expect(byAgent['gave-up'].outcome).toBe('failure');
+  });
+
+  it('reconstructs an undelegated run as a single root node', async () => {
+    const root = await authorize(1);
+    const request = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    manager.commitRequest(request.reservationId, 100, 50, 0.2);
+
+    const run = manager.getRunReconstruction(root.authorization.authorizationId);
+    expect(run.nodeCount).toBe(1);
+    expect(run.maxDepth).toBe(0);
+    expect(run.root.children).toEqual([]);
+    expect(run.root.spent).toBeCloseTo(0.2);
+    expect(run.root.subtreeSpent).toBeCloseTo(0.2);
+  });
+
+  it('is read-only - leaves an active run settleable afterward', async () => {
+    const root = await authorize(1);
+    const request = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    manager.commitRequest(request.reservationId, 100, 50, 0.2);
+
+    manager.getRunReconstruction(root.authorization.authorizationId);
+
+    const stillActive = manager.getRunReconstruction(root.authorization.authorizationId);
+    expect(stillActive.status).toBe('active');
+    expect(stillActive.root.status).toBe('active');
+    const receipt = await manager.settleTask(root.authorization.authorizationId);
+    expect(receipt.actual).toBeCloseTo(0.2);
+  });
+
+  it('rejects an unknown authorization', () => {
+    expect(() => manager.getRunReconstruction('no-such-authorization')).toThrow(/No such task authorization/);
+  });
+
+  it('reports spend from events predating ActionEvent.leaseId as unattributed', async () => {
+    // A store written before ActionEvent carried leaseId. lease.spent stays
+    // authoritative; only the per-node action breakdown degrades.
+    const storePath = path.join(tmpDir, 'legacy-state.json');
+    const persisted = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const root = await persisted.authorizeTask({
+      budget: 'research',
+      taskId: 'task-legacy',
+      task: 'Review a repository',
+      allowance: 2,
+    });
+    const request = persisted.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
+    persisted.commitRequest(request.reservationId, 100, 50, 0.2);
+
+    const raw = JSON.parse(fs.readFileSync(storePath, 'utf8'));
+    for (const events of Object.values(raw.usage) as { leaseId?: string }[][]) {
+      for (const event of events) delete event.leaseId;
+    }
+    fs.writeFileSync(storePath, JSON.stringify(raw));
+
+    const reloaded = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const run = reloaded.getRunReconstruction(root.authorization.authorizationId);
+    expect(run.totalSpent).toBeCloseTo(0.2);
+    expect(run.unattributedCost).toBeCloseTo(0.2);
+    expect(run.attributedCost).toBe(0);
+    expect(run.root.spent).toBeCloseTo(0.2);
+    expect(run.root.costs.inferenceUsd).toBe(0);
+    expect(run.root.actionCount).toBe(0);
+  });
+});
