@@ -189,6 +189,33 @@ and `npm test` remain the repository checks when `.claude/checks.sh` is absent.
 > not started (`PostgresTaskStore` isn't wired in as
 > `TaskAuthorizationManager`'s backend yet).
 
+## Deterministic authorization demo
+
+`demo/deterministic-authorization.ts` (`npm run demo:deterministic`) runs
+the three-phase structure end to end against in-process fake providers,
+with both SQLite files in a temp directory deleted on exit. No network.
+
+```text
+PROPOSE  scripted extraction → ContractInput with one unresolved constraint
+         → PurchaseMissionService.create() → approve() refused ("Unresolved
+           hard constraints") → revise() to v2
+RATIFY   renderApproval() → sha256 → SqliteAgentRegistry.registerLineage /
+         registerVersion / issueCredential / createMandate(outcomeContractDigest)
+         → approve(binding)
+ENFORCE  evaluatePreflight(wrong dates) → refused; FakeProviders.issueCalls === 0
+         execute(forged secret) → AgentAuthenticationError
+         execute(exact, real credential) → reconcile() → assessOutcome success
+         second mission, merchant reports failed → failure, unrecovered 500
+         → requestRecovery('refund') → postRefund → reconcile → unrecovered 0
+```
+
+`runDemo(log)` is exported so `tests/demo-deterministic.test.ts` can run the
+same script silently and assert the provider call counts and assessments.
+The demo owns no logic: everything it shows is the mission slice and the
+registry behaving as documented above. `FakeProviders` in the demo file
+stands in for a payment rail and a merchant, and its `mode` switch is what
+produces the paid-but-not-delivered scenario.
+
 ## What this is
 
 Scrip authorizes, meters, and settles autonomous work. The core unit is a

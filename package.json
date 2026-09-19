@@ -14,7 +14,8 @@
     "http-server": "tsx bin/http-server.ts",
     "visuals:agents": "tsx visuals/live-server.ts",
     "visuals:card-real": "tsx visuals/agent-card-real-server.ts",
-    "visuals:console": "tsx visuals/console-server.ts"
+    "visuals:console": "tsx visuals/console-server.ts",
+    "demo:deterministic": "tsx demo/deterministic-authorization.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
