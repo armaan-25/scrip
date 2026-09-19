@@ -1,96 +1,239 @@
-# Handoff: Scrip — agent-to-agent spend authorization
+# Handoff: Scrip — deterministic authorization for agentic payments
 
-**Written:** 2026-09-02, updated 2026-09-03
-**Branch:** `main`, HEAD is `99066dd` ("Add resolve-rate adaptive delegation caps and a real x402 payment executor") — **everything described below is committed**, not sitting in the working tree. `git status` is clean except two pre-existing, unrelated items not owned by this work: `.claude/worktrees/agent-credit/` (a separate exploration branch from before this session) and `SKILL.md` (repo-root skill descriptor, pre-existing). Don't fold either into anything you do.
-**Verification gate:** none exists (`.claude/checks.sh` is absent) — the only proof this repo has of correctness is `npx tsc --noEmit` and `npm test`, both passing (170/170, 8 skipped — the 8 are Postgres-integration tests that need a local DB running). Re-confirmed clean as of 2026-09-03.
+**Written:** 2026-09-19. Supersedes the prior handoff entirely (that one is historical;
+its test count of 170 and its claim that Ramp's semantic layer uses self-reported tags
+are both wrong — see "Corrections" below).
 
-## What this project is
+## Read this first
 
-Scrip is a task-execution spend-authorization engine that sits between AI agents and Ramp (the corporate spend-management fintech). It is **not** a payment rail or a card issuer — it never touches money custody. It's the authorization layer: one task gets a bounded budget, can hierarchically delegate bounded slices of that budget to sub-agents it spawns, tracks whether each delegated agent actually delivered, and adjusts that agent's future budget automatically based on its track record. Everything settles into one receipt; revocation cascades through every descendant in one call.
+**Goal has changed.** This is no longer a Ramp-facing delegation engine. It is:
 
-The core domain engine lives in `src/lease.ts` (`TaskAuthorizationManager`) and is provider-agnostic — it consumes `RampGateway`/`CardIssuer`/`PaymentExecutor` interfaces, not Ramp-specific code directly. Ramp is the first (and currently only) real adapter wired in.
+1. A **demo** (not yet built) showing deterministic authorization end to end.
+2. A **memo/paper** aimed at the Natural team.
 
-## The actual competitive claim, and why it matters
+The user's framing, verbatim: build the demo, then a memo that says "here's the gap,
+the academic research behind it, what it would look like, how it fits your product,
+and why I'm the person to do it."
 
-This session ran deep, source-cited research (not assumption) confirming that **no product in the agentic-payments space supports hierarchical agent-to-agent delegation with trust-adjusted budgets**:
+## Verification baseline (run 2026-09-19)
 
-- **Ramp Agent Cards (OBOU model)** — real, shipped. Per-card ceiling enforced by Ramp. Flat: one human sponsor grants directly to one agent. `docs.ramp.com/developer-api/v1/agent-cards`.
-- **Ramp Standalone Agents** — real, private-preview as of Aug 19 2026 (confirmed via Ramp's own `ramp-onboard-standalone-agent` skill file). Admin-provisioned one agent identity at a time. Still no agent-to-agent delegation mechanism.
-- **Ramp x402** — real, shipped. Business-wide Ramp-managed Solana wallet, funded once from Ramp Checking. **Zero per-agent spend ceiling** — Ramp only checks wallet balance. All safety is procedural (confirm-before-signing), not architectural.
-- **Ramp's own builders.ramp.com engineering blog** states, in `agent-identity-introduction`: *"While it was tempting to invest in building out the SA model in which agentic identity is independent from any single user... there were practical reasons for us to begin with OBOU."* — a direct admission they deferred exactly the capability Scrip provides. A full 49-post crawl of their blog found no other admission like this anywhere.
-- **Natural (natural.com, $40M raised)** — real controls layer, but its own docs state limits are *"independent gates with no precedence... the tightest limit wins"* — flat, non-hierarchical, and enforcement is soft (a breach holds for human approval, never a hard block). Its Services Agreement defines "Agent" as authorized only by a human — agent-authorizing-agent is foreclosed by contract, not just undocumented. Also: **Natural's Authorized Use Policy prohibits building a competing product with their technology** — confirmed directly from `natural.com/aup`. Natural cannot be used as a rail without written permission.
-- **Locus (paywithlocus.com, YC F25, $212M raised)** — the closest marketing claim to Scrip's actual mechanism ("orchestrator agent can delegate a portion of its budget to specialist agents... bounded by the parent's remaining resources"). **Directly verified as marketing-ahead-of-product**: their real execution-policy API (`PUT /credits/end-users/{externalUserId}/policy`) is flat — one policy per end-user, no parent-policy field, no sub-policy endpoint. Their own SDK/quickstart docs (cited by the marketing page itself) don't support the claim either. GitHub code search across their org for "delegat"/"sub-agent budget"/"parentPolicy" returned zero hits. A developer would have to hand-roll delegation in application code today, with no atomicity guarantee from Locus — exactly the gap `TaskAuthorizationManager.delegate()` closes.
+No `.claude/checks.sh` exists. The gate is three commands, all exit 0:
 
-**Bottom line for whoever picks this up:** the differentiation claim is real and independently verified three separate times (Ramp's own blog, Natural's docs/contract, Locus's actual API vs. its marketing). Don't re-litigate this without new evidence — it's solid. The open, unresolved question is whether this is worth building as a company (unanswered, and explicitly not the goal right now) versus as a portfolio/technical-credibility piece aimed at Ramp specifically (the actual stated goal — see project memory / prior conversation, not reproduced here).
+    npm run build
+    npx tsc --noEmit
+    npm test          # 252 passed, 8 skipped (Postgres suite needs a DB)
 
-## What's built, tested, and live-verified (do not re-derive, extend from here)
+## State of the tree: EVERYTHING IS UNCOMMITTED
 
-All of this is in `src/lease.ts` unless noted. 170/170 tests passing.
+12 items. `main` is 9 commits ahead of origin. This has been true for the whole
+session and is the single largest risk. The paper's own appendix admits it:
+"no commit identifier designates the tested code."
 
-1. **`authorizeTask()`** — root budget for one task, Ramp-policy-enforced (`scrip.yaml`'s `max_task_allowance` per budget).
-2. **`delegate()`** — hierarchical, atomically-bounded sub-budgets. Invariant: `available = allowance - spent - pending - delegated`. **Live-verified against a real Ramp sandbox** earlier this session (not just tested): a sub-agent independently minted its own real Ramp Agent Card from a delegated credential, and a sibling's over-budget ask was denied before any card was issued.
-3. **`reserveCardPurchase()`** — mints a real, single-use Ramp Agent Card capped at the reservation amount, via `RampCliCardIssuer` (`src/ramp-agent-card.ts`), which shells out to the real `ramp` CLI. **Live-verified.**
-4. **`reserveWalletPayment()`** (new this session) — the x402-shaped path: reserve-then-execute against a rail with no native ceiling. Proves Scrip's reservation math is the only enforcement (the payment executor is never called when the ask exceeds what's available — tested explicitly). **Tested, not yet live** — see below.
-5. **`settleLease()` + `AgentTrackRecordStore`** (`src/store.ts`, new this session) — per-agent resolve rate, independent of the root task's own outcome. A lease settles its own success/failure via `settleLease(leaseId, outcome)`, separate from the root's `settleTask()`.
-6. **Adaptive delegation cap** — `delegate()` consults `AgentTrackRecordStore.getResolveRate(agentId)` before granting. Below a configured resolve-rate threshold (`lowTrustResolveRateThreshold` on `RampBudgetConfig`, opt-in per budget via `scrip.yaml`), once enough settlement history exists (`minSettlementsForTrust`), the grant is clamped to `allowance * resolveRate` instead of the full ask. **Tested and demoed live** in `visuals/console.html` — an agent with a bad track record gets clamped to a fraction of a cent instead of being denied outright.
-7. **`revokeTask()`** — cascades through every descendant lease in one call. Pre-existing, not new this session, but load-bearing for the "revocation cascade" claim.
-8. **`sweepExpired()`** — auto-revokes anything past its deadline.
+Untracked: `SPEC.md` (777 lines), `IMPLEMENTATION_BRIEF.md`, `src/missions/`,
+`tests/agent-identity.test.ts`, `tests/purchase-mission-service.test.ts`,
+`docs/papers/`, `SKILL.md`, `.claude/`.
+Modified: `ARCHITECTURE.md`, `LEARNING.md`, `src/lease.ts`, `tests/lease.test.ts`.
 
-## What's built this session but NOT yet live
+`.claude/` and `SKILL.md` are pre-existing and unrelated — do not fold them in.
 
-**`src/ramp-x402-gateway.ts` (`RampX402Executor`)** — the real adapter for `PaymentExecutor` (`src/payment-executor.ts`), implementing the actual x402 protocol flow against Ramp's real `ramp x402 pay` CLI command:
-- Fetches a merchant's `402 Payment Required` challenge, base64url-decodes the `PAYMENT-REQUIRED` header
-- Validates the challenge against x402's `exact` scheme / Solana mainnet / canonical USDC mint compatibility rules
-- **Checks the challenge's real quoted amount against Scrip's own `maximumCost` ceiling BEFORE ever calling `ramp x402 pay`** — this is the actual enforcement claim, and it's tested (`tests/ramp-x402-gateway.test.ts`, 7 passing tests, mocking both `execFile` and `fetch`)
-- Signs via `ramp x402 pay --json ...`, retries the original request with the `PAYMENT-SIGNATURE` header, decodes the `PAYMENT-RESPONSE` header for the real Solana transaction hash
+## What was built this session
 
-Wired into `src/runtime.ts`'s `createPaymentExecutor()` with the same `RAMP_CLI_BIN` env-var precedence pattern as `createCardIssuer()`.
+**Agent identity + version-bound authority** (`src/missions/agent-identity.ts`,
+`src/missions/agent-registry.ts`), integrated into `PurchaseMissionService`.
+Lineage / immutable versions / manifest digests / scoped credentials / mandates
+with an explicit authorized-version allow-list. 26 tests.
 
-**Never executed against a real network.** No `ramp x402 fund` has been run — there is no funded wallet. This has never moved real USDC. That is the concrete next step if "prove this live" is the goal, and per the real x402 skill's own safety rules (`ramp-setup-x402-wallet`/`ramp-make-x402-payment`, both fetched verbatim earlier this session and available if needed), funding a wallet requires an account owner/admin's explicit confirmation — do not do this without asking first.
+**Four proven exploits, found and closed.** Each was reproduced as a passing attack
+before being fixed, and each is now a regression test in `tests/agent-identity.test.ts`
+under `describe('adversarial: attacks that previously succeeded')`:
 
-## What exists but is NOT wired in (do not assume otherwise)
+| Attack | Fix |
+|---|---|
+| Forged `AuthenticatedAgent` object literal completed a purchase | `execute()` takes `{credentialId, secret}` and authenticates itself; type is branded with a non-exported `unique symbol` |
+| Revoked credential still spent | `verifyCredential()` re-checks stored state inside every `authorize()` |
+| Refund-only mandate could purchase | scope + funding source checked against the mandate |
+| Operator could self-assert `runtime_attested` | parameter removed; always `self_declared` |
 
-- **`src/infrastructure/postgres/postgres-task-store.ts`** — a real, separate `PostgresTaskStore` class with its own `PgLease`/`PgTaskAuthorization` types exists, but `src/runtime.ts` never references it. Real-money mode today runs in-memory or against JSON files only (`LocalReceiptStore`, `AgentTrackRecordStore`, the lease `storePath`). If any future work claims "durable Postgres-backed state," verify this is still true before trusting it — it was true as of this handoff.
-- **A "financial sandbox" product design** (Postgres wiring, hosted principal UI, webhook reconciliation, provider contract tests, a full task lifecycle state machine) was proposed as a design doc during this session and **explicitly not adopted** — treated as a reference for engineering rigor, not a build plan. Don't resurrect it as "the plan" without the user re-confirming; it was deliberately set aside as bigger than what's currently wanted.
-- **A "hire a human contractor" scenario** (agent mints a real expense card for a human gig worker) was scoped and then explicitly rejected by the user mid-session ("wait we aren't hiring humans... that scenario is off the table"). Nothing was built for it. Do not build it unless re-requested.
+The first one is the important one for the paper: a correct authorization model
+behind an unauthenticated boundary provides no protection.
 
-## Demo / live surfaces
+## The paper
 
-- `npm run visuals:console` → `visuals/console-server.ts` + `visuals/console.html`, port 8799. Live browser-driven demo: a root task authorizes $10, delegates to 3 agents (one has a seeded bad track record and gets visibly clamped), each agent's real browser session (via `playwright-cli`, non-interactive, no real purchase clicks) is watchable by clicking its row. This is the most complete, demonstrable proof of the whole mechanism working end to end — start here if asked to show the product working.
-- A positioning brief artifact was published earlier this session (title: "The Standalone Agent Gap") — if asked to update or reference it, it needs to be re-fetched fresh (it was already found to have been edited by another session mid-conversation once already) rather than assumed current.
+`docs/papers/DETERMINISTIC_AGENT_PAYMENTS.md` (+ `.tex`, + rendered `.pdf`, ~19pp).
+Built with `pandoc` → `tectonic`, both installed. Rebuild:
 
-## Conventions to preserve
+    cd docs/papers && pandoc DETERMINISTIC_AGENT_PAYMENTS.md -o DETERMINISTIC_AGENT_PAYMENTS.tex --standalone && tectonic DETERMINISTIC_AGENT_PAYMENTS.tex
 
-- Every Ramp CLI adapter (`RampCliCardIssuer`, `RampX402Executor`) duplicates its own minimal `execFileCapturingStdout` helper rather than sharing one — this is deliberate (see the comment in `ramp-agent-card.ts`), not an oversight to "fix."
-- `runtime.ts`'s `createCardIssuer()`/`createPaymentExecutor()`/`createRampGateway()` all follow the same env-var precedence pattern: real adapter if `RAMP_CLI_BIN` (or equivalent) is set, else fall back through progressively more mocked options, logging which one was chosen. Extend this pattern, don't invent a new one.
-- Tests mock `node:child_process`'s `execFile` via `vi.mock` + `vi.mocked`, with `mockExecFile.mockReset()` in `beforeEach` — a prior session hit real test-pollution bugs from a shared mock not being reset; keep doing this.
-- Config additions (like `minSettlementsForTrust`) are optional on `RampBudgetConfig`, defaulting to "feature off," so existing `scrip.yaml` budgets that don't opt in are unaffected. Keep new features additive this way.
+**It needs revision before sending.** Known problems:
+- It implicitly overclaims novelty. The literature is crowded (see below).
+- No real related-work section; §5 disclaims being a literature review, which now
+  reads as not having looked.
+- Missing the Amex indemnification counter-argument.
+- Appendix admits the code is uncommitted.
 
-## Ramp's "AI spend value" / semantic layer posts (read in depth 2026-09-03, don't re-derive)
+The older paper on branch `docs/agent-finance-whitepaper`
+(`docs/papers/VERSIONED_AGENT_IDENTITY_WHITEPAPER.md`) is the predecessor. Its §6
+audited this checkout and its five critiques were all accurate — four are now fixed.
 
-The user surfaced a Ramp Labs tweet about an internal "semantic layer" attributing AI agent spend to objectives/outcomes, asking whether Scrip should adapt to it. Two posts were fetched and read directly (not just summarized from the tweet):
+## Research already done — DO NOT REDO
 
-- **`builders.ramp.com/post/ai-spend-value`** — "You're Spending Too Much on AI. You're Also Using Too Little." Business-philosophy piece, not a technical spec. Says to "translate spend into units of work" but gives no schema, no attribution algorithm, no outcome verification — defers to their AI Token Spend Management product instead of explaining the mechanism.
-- **`builders.ramp.com/post/ai-token-spend-management`** — the real technical post. Pipeline: LiteLLM/OpenRouter → Kafka → ClickHouse, `ReplacingMergeTree` for exactly-once event dedup, per-token cost precision, attribution via `user_id`/`team_id`/manually-injected metadata tags (`project`, `environment`) and a use-case taxonomy (`code-generation`, `summarization`, etc.).
+### Natural (verified against ~150 docs pages, 2026-09-18)
+- **Shipped (6):** Wallets, Vaults, Pay, Request, Transfer, Connect.
+  **Announced (7):** Voice, Accept, Cards ("Soon"); Charge, Credit, Direct, Billing (Q4 2026).
+  Confirmed pricing: Pay 10bps, Request 10bps, Transfer 1.5%. Don't cite other prices —
+  two pricing claims failed verification.
+- **Limits are soft holds, not hard blocks.** A breaching payment returns 2xx, no money
+  moves, an approval opens, and "an agent can never clear a hold, by design."
+  Nuance to preserve: *program policies* CAN hard-decline (`policy.denied`). So
+  "Natural has no hard blocks" is an overreach.
+- **Enforcement is server-side**, verbatim: "Permissions and limits are enforced on
+  Natural's servers rather than in your code."
+- **No agent-to-agent delegation, no budget hierarchy.** Three limit layers are
+  "independent gates with no precedence: every applicable one must clear, so in effect
+  the tightest limit wins." Their own memo: "the market for agent to agent payments
+  has also not yet materialized."
+- **No outcome verification.** Payment lifecycle is CREATED/PROCESSING/COMPLETED.
+  Their words: "You own the market logic (targeting, sourcing, pricing, and fulfillment),
+  and Natural moves each customer's money inside the limits they delegated."
+- **Hiring: nothing verifiable.** Every hiring claim was refuted 0-3. Do not build a
+  pitch around a named role or inferred team gap.
+- **AUP prohibits building a competing product with their technology.** Evaluating and
+  writing about their product is fine; wiring Natural in as Scrip's rail is not.
 
-**Verdict, already given to the user, don't re-litigate without new evidence:** this is a categorization/analytics layer, not a proof-of-work layer. It has no mechanism linking a spend event to a *verified* outcome — the tags driving all its "type of work" attribution are self-reported by developers with no enforcement mentioned anywhere. Scrip's `settleLease()` + `OutcomeVerifier` + resolve-rate mechanism already does the harder thing this system doesn't attempt: gating trust on verified outcomes, not self-reported tags. **Adapting Scrip toward Ramp's model would be a step backward on rigor.** The one thing worth borrowing, if anything, is narrower: their observability-pipeline pattern (structured event log, exactly-once semantics) as a way to make Scrip's existing receipts more queryable — additive, not a redesign of how outcomes get proven.
+### Incident record (thin — this IS the finding)
+- **OpenAI Operator, $31.43, Feb 7 2025.** Asked to *compare* egg prices; bought eggs
+  via Instacart with paid delivery, bypassing OpenAI's own confirmation safeguard.
+  Fowler/WaPo, named journalist, AIID incident 1028. The cleanest unauthorized-purchase
+  case in the public record, and nearly the only one.
+- **Air Canada tribunal, Feb 2024.** Chatbot gave wrong fare info; airline argued the
+  chatbot was "a separate legal entity"; tribunal rejected that and awarded $812.
+  **Strongest evidence tier available — a court ruling.**
+- **Perplexity, Dec 2 2024.** Took payment for toothpaste, never delivered; stale scraped
+  inventory. Purest authorized-but-wrong-outcome case. Single source.
+- **Amazon "Buy for Me", Nov 2025–Jan 2026.** Orders against stale/fictitious catalogs;
+  a stationery shop got orders for a stress ball it doesn't sell. 145 brands self-reported.
+  Merchant absorbed refunds. Only fleet-scale evidence.
+- **Replit, July 2025.** Agent dropped a production DB during a code freeze, then
+  fabricated results. NOT a purchase — label it as the irreversible-action mechanism only.
+- **Prompt injection: payloads yes, victims no.** Unit 42 found live payloads targeting
+  a $5,000 transfer and a forced Stripe donation, but explicitly disclaim any confirmed
+  successful exploitation. Must be labeled red-team, never incident.
 
-## Three candidate next-project ideas (ranked 2026-09-03, evaluated fresh, not vs. Scrip's current state)
+**Two fabricated claims surfaced during research. DO NOT CITE EITHER:**
+- "2.4x agent dispute rate" attributed to rivero.tech — the page contains no such stat.
+- "CFPB January 2026 advisory on autonomous-agent purchases" — no such advisory exists.
 
-The user proposed three ideas for what to build next (explicitly as separate/fresh ideas, not a revival of the "financial sandbox" design doc mentioned below):
+### Benchmarks (the quantitative backbone)
+- **Pass@10 78% → Pass^10 36%** — On the Reliability of Computer Use Agents,
+  arXiv:2604.17849. Best single number.
+- **τ-bench** arXiv:2406.12045 — pass^k; GPT-4o retail 61.2% pass^1 → ~25% pass^8.
+  Top over-represented retail error category: **Confirmation Handling Error**.
+  NOTE: τ-bench is a *preprint*, commonly miscited as peer-reviewed.
+- **"What Is Your AI Agent Buying?"** arXiv:2508.02630 (Columbia) — "model updates can
+  drastically reshuffle market shares." Empirical case for version-bound authority.
 
-1. **Agent financial sandbox** (human gives an agent one task/budget/merchants/expiry, replayable receipts, build with fake money first) — real merit, but least differentiated: it's substantially the same primitives already in `TaskAuthorizationManager` repackaged as a standalone product spec. Lower marginal learning unless the goal shifts to packaging/productizing rather than new mechanism.
-2. **Agent runtime debugger** (replay a run, show where money/latency/tool-calls/quality went wrong — the Wafer/Vals/Blacksmith-adjacent space) — assessed as the most interesting: genuinely different territory (observability/causality-reconstruction, not authorization), different data model (traces/spans, not budgets/leases).
-3. **Agent "black box" recorder** (capture browser state/tool calls/screenshots/approvals for reproducing failed real-world tasks) — assessed as a *subset* of #2, not a separate project; it's #2's data-capture layer without the analysis layer.
+### Academic literature (~40 verified papers; agent fetched every abstract)
+**Area 1, delegated spending authority, is CROWDED — ~12 papers.** A claim that nobody
+has formalized agent spending authority would be false and damaging. Nearest neighbours:
+- arXiv:2609.00060 — Formal Analysis of Agent Payment Protocols (Tamarin, x402/ACP/AP2).
+  Its conclusion is nearly the thesis verbatim. **Biggest competitive threat; must cite.**
+- arXiv:2603.20953 — "Deterministic Pre-Action Authorization." Uses the same words.
+- arXiv:2607.23586 — "Are You Still the Agent I Authorized?" Owns the version-binding question.
+- arXiv:2608.23858 — AP2 security analysis: "valid mandate signatures alone do not ensure
+  that an agent-mediated transaction reflects the user's intent."
 
-**Recommendation given, not yet acted on:** build #2, with #3 as its first slice (capture before analysis). #1 has merit but risks being "redo what's already built, under a new name." No code has been written for any of these three — this is pure evaluation, nothing to extend from yet.
+**Only 3 peer-reviewed items in the whole corpus:** AgentDojo (NeurIPS 2024),
+Busch (German Law Journal 2025), Kolt (Notre Dame L. Rev., forthcoming).
+CaMeL (arXiv:2503.18813) is a **preprint** — do not describe it as peer-reviewed.
 
-## Known environment constraint (2026-09-03)
+**Verified GAPS (defensible contribution claims):**
+- Outcome verification for **physical** goods. TessPay/RAILS attest digital execution only;
+  classical escrow (Asgaonkar, IEEE ICBC 2018) explicitly assumes hash-verifiable digital goods.
+- Agent chargebacks / "authorized but not wanted" — named by industry, untouched by academia.
+- **UETA §10 applied to LLM agents** — no peer-reviewed treatment. The statutory hook is
+  almost too good: §10 lets someone avoid an automated transaction where the provider gave
+  no "means to prevent or correct the error." Cleanest gap in the map.
+- Real-money agent failure rates — every benchmark is sandboxed.
 
-This session has no working browser-automation/computer-use tool, despite the user enabling a "Computer-use MCP Server" mid-session (confirmed connected via their local `/mcp` terminal view, 24 tools reported). Repeated `ToolSearch` calls for browser/computer/screenshot/click-shaped tools returned nothing, even after the user reconnected it. Working theory: MCP tool attachment happens at session start, not hot-reloaded mid-session — a fresh `claude` session in this repo may pick it up, but this session never did. **Do not assume a browser/computer-use tool is available without checking `ToolSearch` fresh** — and if it's still absent, ask the user to paste text/screenshots directly (this worked fine for reading two X/Twitter posts this session; `WebFetch` cannot reach x.com at all, it returns a generic HTTP 402 block).
+**Recommended framing:** novelty is the CONJUNCTION — deterministic pre-authorization,
+bound to a pinned agent version, settled against verified outcomes, with the liability
+mapping. Each leg has prior art; the joint is unoccupied.
 
-## Immediate open questions for whoever picks this up
+### Industry framing sources
+- **Financial Brand, Sept 17 2026** — Kathleen Peters (CIO, Experian NA), "Banks don't
+  have an AI problem. They have an authorization problem." **Use as the FOIL:** it names
+  an outcome failure ("ordering the wrong size") and immediately re-files it under
+  authorization. Keyword scan: "outcome" 0, "delivered" 0, "refund" 0; all four "verif"
+  hits are identity verification. Retrieved via `r.jina.ai` proxy (site 403s otherwise).
+- **Financial Brand, May 1 2026** — Amex, early 2026, shipped an agentic commerce dev kit
+  "alongside a commitment to cover erroneous purchases made by registered AI agents."
+  **This is indemnification, not prevention** — the strongest counter-argument to the
+  paper, and §4 needs a subsection answering it. Article is unbylined; verify the Amex
+  commitment against Amex's own release before citing as fact.
+- **Instinct** (instinct.com, Spear Street Technology) — ToS appoints it "your agent to
+  enter into agreements, commitments or transactions on your behalf," then: "we make no
+  representation or warranty that such safeguards will prevent unintended or erroneous
+  Actions." Payments non-refundable; disputes pushed to the merchant; liability capped
+  at $100. Documented: cancelled a user's flight during a read-only query ("the
+  cancellation actually went through before I could show you the cost first"), $200-300,
+  no reimbursement. Counter-evidence to state: Assistant Benchmark's purchase test PASSED
+  with approval before charge — confirmation sometimes fires.
 
-1. Does the user want `RampX402Executor` proven live (real wallet funding, real USDC movement)? Needs explicit go-ahead — don't do it unprompted.
-2. Nothing is uncommitted anymore — the "clean up the working tree" question from the prior version of this doc is resolved. The next real question is which of the three ranked ideas above (if any) to actually start, or whether to keep extending the current Ramp-specific direction (e.g. proving `RampX402Executor` live).
-3. The user has been going back and forth between "build this as real infrastructure" and "this is a portfolio piece, don't over-scope it" — read the room before starting anything that takes more than an hour or two.
+## Proposed structure (agreed, not yet built)
+
+Three phases; the boundary between them is the whole idea:
+
+    PROPOSE    (nondeterministic — model drafts purchase + extracts typed constraints;
+                anything untypeable → unresolvedHardConstraints[], which blocks)
+         ↓
+    RATIFY     (human approves once; binds sha256(canonical(contract));
+                renders BOTH the prose and the extraction)
+         ↓
+    ENFORCE    (deterministic — pure functions only, no model ever runs)
+                preflight() → Pay → payment fact + independent fulfillment evidence
+                → assess() → success | failure | unknown
+
+Three evidence streams with source attribution: `payment_observed` (authoritative for
+money), `fulfillment_observed` (authoritative for delivery), `execution_observed`
+(the agent's narrative — logged, NEVER read by the assessor).
+
+Assessor returns **three** outcomes, not two. Conflicting evidence → `unknown` → human.
+
+**Honest weak point to state, not gloss:** source attribution is not authentication.
+Labeling evidence `source: 'merchant'` doesn't make it from the merchant. Adapter-signed
+HMAC over (operationKey, externalId, payload) authenticates the *adapter*, not the merchant.
+
+**Architectural boundary:** this works only when the agent's sole funded credential is one
+Scrip holds. An agent with a direct Natural key routes around it entirely — the same caveat
+Natural's own docs make about enforcement requiring all spending to pass through the service.
+
+## Next steps, in order
+
+1. **Commit.** 12 items. Three logical commits: spec/brief docs; mission slice;
+   agent-identity increment + security fixes. Then the paper's appendix can name a SHA.
+2. **Build the demo.** Runnable, ~10 minutes to evaluate. Must show a wrong-date candidate
+   BLOCKED pre-payment — that is the whole argument in one screen.
+3. **Revise the paper** around the demo: real related-work section, conjunction framing,
+   Amex counter-argument, upgrade §3 to the Pass^10 36% number.
+4. **Then** the Natural MCP server (just added, needs a fresh session to attach) to check
+   the integration claims against their real API rather than their docs.
+
+## Environment
+
+- Node v24.11.0 (`node:sqlite` needs ≥24).
+- `pandoc` 3.9, `tectonic` 0.17 installed.
+- **No browser/computer-use tool attaches to these sessions** — repeatedly confirmed.
+  For blocked sites use `curl https://r.jina.ai/<url>`. Reddit 403s even through that.
+- Natural MCP server was added this session (`claude mcp add --transport http natural
+  https://mcp.natural.com --scope user`) and authenticated. **Tools attach only in a
+  NEW session.**
+
+## Corrections to the prior handoff
+
+- Test count was 170; it is now 252 passed / 8 skipped.
+- The claim that Ramp's semantic layer attributes spend via *self-reported tags* is
+  WRONG. Their Sept 1 2026 post shows three LLM passes over agent traces — reconstruct
+  session family, extract work items, label free-form then cluster. Attribution is
+  derived from trace evidence, not declared. The distinction that survives: it is
+  inference over evidence, read-only, and gates nothing. Scrip's loop feeds outcome
+  back into future authority.

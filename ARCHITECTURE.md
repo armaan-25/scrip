@@ -1,5 +1,182 @@
 # Scrip Architecture
 
+## Persistent agent identity and version-bound authority
+
+Implements `SPEC.md` "Persistent agent identity and version-bound authority".
+Runs in the same Node process as the mission slice, with its own SQLite
+database and no network access. No new npm dependency: `node:sqlite` and
+`node:crypto` only.
+
+File ownership:
+
+- `src/missions/agent-identity.ts`: domain types and pure functions -
+  `AgentManifest`, `AgentLineage`, `AgentVersion`, `FinancialMandate`,
+  `AttestationLevel`, `canonicalManifest()`, `manifestDigest()`,
+  `classifyManifestChange()`, `strictestTransition()`, and constant-time
+  `secretMatches()`. No I/O.
+- `src/missions/agent-registry.ts`: `SqliteAgentRegistry` owns persistence
+  and the authentication/authorization boundary - `registerLineage()`,
+  `registerVersion()`, `registerSuccessor()`, `issueCredential()`,
+  `rotateCredential()`, `authenticate()`, `createMandate()`,
+  `approveMandateChange()`, `revokeVersion()`, `revokeMandate()`,
+  `changeOperator()`, `verifyManifestIntegrity()`, `authorize()`.
+- `src/missions/purchase-mission-service.ts`: `checkAuthority()` and
+  `recordAuthorityRefusal()`; `approve()` takes an optional agent binding,
+  `execute()` an optional `AuthenticatedAgent`.
+- `src/missions/types.ts`: optional agent fields on `MandateEvidence`,
+  `PurchaseOperation`, and `MissionReceipt`; two new event types.
+
+```text
+registerLineage(owner, operator)          → AgentLineage (history, not permission)
+→ registerVersion(manifest)               → immutable AgentVersion + manifestDigest
+→ issueCredential(lineage, version)       → secret returned once, stored hashed
+→ createMandate(contractDigest, versions) → explicit authorizedVersionIds allow-list
+→ approve(..., binding)                   → MandateEvidence carries lineage/version/mandate
+→ execute(..., authenticate(id, secret))
+   → checkAuthority('pre_reservation')    → before claimOperation/reserveAction
+   → payments.issue()
+   → checkAuthority('pre_dispatch')       → immediately before execution.start()
+   → getReceipt()                         → agentVersionId + attestationLevel
+```
+
+Two authority checks exist because revocation can race an in-flight
+operation. The pre-dispatch check runs after the payment capability is
+issued and before the execution provider is called; a refusal there stops
+dispatch, releases authority via `stopAuthority()`, and reconciles. Once
+`execution.start()` has been called, revocation cannot retract it, and
+`reconcile()` settles that operation under its original version.
+
+Authority refusals are appended in a separate transaction
+(`recordAuthorityRefusal()`) because the pre-reservation check runs inside
+the mission transaction, and throwing rolls it back - which would discard
+the audit record of the denied attempt.
+
+**Assurance limitation.** `attestationLevel` is always `self_declared`.
+The manifest digest detects alteration of the *record*; it does not prove
+what software executed. Nothing here observes the running process. The
+`signed_release` and `runtime_attested` levels are reserved and unissuable.
+Mutable model aliases are flagged via `modelIsMutableAlias`: an upstream
+weight change is unobservable here and is a recorded limitation, not a
+defended-against threat.
+
+**Change policy.** `classifyManifestChange()` never returns `display_only`
+for a code or dependency change - `codeArtifact` maps to `unknown_effect` /
+`require_review`, so a "patch" label earns no exemption. Model, instruction,
+policy, tool-loss and gained-permission changes pause spending pending
+approval. A successor version inherits no authority: it is never added to
+any mandate's `authorizedVersionIds` without explicit re-approval.
+
+## Consumer hotel mission slice
+
+`SPEC.md` and `IMPLEMENTATION_BRIEF.md` now define the consumer direction.
+The older platform description below remains a map of the existing engine;
+the first consumer slice is an application service with fake provider tests,
+not a deployed wallet.
+
+All new code runs in Node. It requires `node:sqlite` (use Node 24 or newer;
+verified here on Node 25.1.0, which emits an experimental SQLite warning).
+There is no new npm dependency. `createRequire()` loads this native module
+because the repository's Vite/Vitest version does not recognize its static
+built-in import. Existing Zod validates runtime input; Node crypto hashes the
+complete deterministic rendered contract and scoped operation key.
+
+File ownership:
+
+- `src/missions/types.ts`: hotel quote, versioned `OutcomeContract`, mission,
+  attributed evidence, recovery policy, receipt, and provider interfaces.
+- `src/missions/outcome-assessor.ts`: input schemas, `renderContract()`,
+  exact-quote `preflight()`, independent `assessOutcome()`, payment totals.
+- `src/missions/mission-store.ts`: `SqliteMissionStore`, append-only event
+  storage, `projectMission()`, optimistic revision checks, unique operation
+  claims, and the transactional adapter for existing lease state.
+- `src/missions/purchase-mission-service.ts`: `PurchaseMissionService`
+  coordinates approval, reservations, provider calls, evidence, recovery,
+  cancellation, and receipts. It uses a local-only `RampGateway` for budget
+  accounting and task receipts; no environment-selected live adapters.
+- `src/lease.ts`: optional `LeaseStateStore` injection, preserving the
+  existing reservation math and JSON/in-memory defaults. The optional
+  `revokeTask(id, { preservePending: true })` disables the full lease tree
+  without cancelling an unknown payment's hold; later commit/cancel can
+  still reconcile that reservation. Default revocation behavior is unchanged.
+
+```text
+create(consumerId, typed hotel terms)
+→ contract_created event → draft PurchaseMission
+→ renderApproval() → consumer approves exact version + summary hash
+→ approve() records the immutable mandate
+→ execute() checks ownership, expiry, hard constraints, and the exact quote
+→ SQLite transaction claims the consumer/mission/version/purchase key
+→ TaskAuthorizationManager.authorizeTask() creates the root
+→ reserveAction() reserves maximumTotal; events and lease state commit together
+→ PaymentCapabilityProvider.issue() receives exact quote, cap, expiry, singleUse
+→ ExecutionProvider.start() receives the capability reference
+→ reconcile() polls payment facts and independently attributed booking evidence
+→ recordPaymentFact() appends capture and commitAction() in one transaction
+→ verify() assesses the booking and capture, then settleTask() emits a local receipt
+→ permitted requestRecovery() records intent before merchant recovery I/O
+→ merchant acknowledgment remains refund_pending
+→ payment-provider refund facts update receipt totals, retaining original capture
+```
+
+Approval records the mandate; the root authorization is created lazily in
+the execution transaction so raw lease credentials need never be persisted
+or returned by this service. Before execution, `revise()` appends a new
+version and removes current approval while retaining the prior version.
+Once execution has started, revisions require a separate mission. No retry
+creates another purchase, including after an unpaid failure or a crash before
+the first provider call. Such retries only poll the original operation key.
+
+SQLite `BEGIN IMMEDIATE`, a unique `(mission_id, contract_version, operation)`
+constraint, and a unique operation key enforce ownership of each operation.
+Financial state remains the existing `TaskAuthorizationManager` snapshot,
+stored in the same SQLite transaction as events and local task receipts.
+The local gateway also counts revoked tasks' pending holds and captured spend,
+so revocation cannot make ambiguous money available to another mission.
+The service reconstructs the manager inside each transaction, avoiding stale
+process-local snapshots across connections. External provider calls run after
+commit, outside the database transaction. A concurrent writer receives a
+retryable `MissionConflictError`; callers retry the same request. SQLite
+releases locks after process death. Production scale would require a separate
+storage decision: each write currently serializes the complete lease snapshot.
+
+Financial receipt meanings: `authorized` is the approved mandate ceiling;
+`reserved` is the actual remaining lease hold; `captured`, `reversed`, and
+`refunded` are separate payment facts; `returned` is unused authorization
+released when authority closes, not a refund; `netSpend` subtracts posted
+refunds/reversals from captures; `unrecovered` is that net spend when failure,
+recovery, or revocation leaves money outstanding. Refund acknowledgment never
+increases `refunded`. Task receipts are settlement-time artifacts; later
+evidence and recovery update the mission receipt, without rewriting them.
+
+Provider boundaries and remaining gaps:
+
+- `ExecutionProvider` and `PaymentCapabilityProvider` are local interfaces;
+  `FakeHotel` in `tests/purchase-mission-service.test.ts` implements the full
+  reference scenario. No merchant, payment, Kernel, or Ramp integration was
+  added. Stop/revoke must be idempotent by operation key, including when a
+  provider reference was lost to a timeout; providers must honor single use,
+  exact quote scope, and revocation tombstones during issuance races.
+- Unknown payment results retain the hold. Only authoritative terminal unpaid
+  evidence releases it. Invalid/out-of-scope facts are rejected for review;
+  out-of-order recovery facts must be retried after capture is available.
+- Merchant/email facts are accepted only through trusted application adapter
+  methods. There is no signature verification or consumer authentication
+  transport yet; the service checks ownership against the supplied identity.
+  Agent prose is recorded separately and cannot satisfy verification.
+- Cancellation/refund requests are supported. Replacement/rebooking and all
+  dispute submission are rejected. Exact dispute confirmation and submission
+  are deferred, so no unattended dispute path exists.
+- No HTTP routes, consumer UI, production runtime composition, automatic
+  polling scheduler, production deployment, or live-money verification.
+  Existing CLI/MCP/HTTP/JSON storage is not migrated to the SQLite store.
+- A refund/reversal is modeled as a posted credit against a prior capture;
+  this slice does not implement pre-capture authorization-void reconciliation.
+
+`npx vitest run tests/purchase-mission-service.test.ts` exercises the complete
+fake flow, independent SQLite connections, transactional rollback, and a real
+subprocess exit at the provider boundary. `npm run build`, `npx tsc --noEmit`,
+and `npm test` remain the repository checks when `.claude/checks.sh` is absent.
+
 > **Mid-pivot.** This repo is moving from an inference-budget prototype
 > toward a broader execution-economics platform for autonomous work. The
 > domain mechanism described below (atomic reserve/commit/cancel over any
