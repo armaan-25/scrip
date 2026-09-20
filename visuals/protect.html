@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Scrip — purchase-bound controls for agent cards</title>
+<style>
+  :root { --paper:#fafaf7; --ink:#16150f; --muted:#86847c; --accent:#e4f222; --red:#c0392b; --amber:#d9a400; --green:#3c9d5d; --surface:#101010; --panel:#1c1c1c; --border:#2c2c2c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--surface); color:var(--paper); font:13px/1.45 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  header { padding:18px 24px 10px; border-bottom:1px solid var(--border); }
+  header h1 { margin:0; font-size:15px; font-weight:600; }
+  header p { margin:4px 0 0; color:var(--muted); }
+  .badge { display:inline-block; padding:1px 6px; border:1px solid var(--amber); color:var(--amber); border-radius:3px; font-size:11px; margin-left:8px; }
+  main { display:grid; grid-template-columns: 320px minmax(0,1fr) 360px; gap:0; min-height:calc(100vh - 62px); }
+  section { padding:16px 18px; border-right:1px solid var(--border); overflow:auto; }
+  section:last-child { border-right:none; }
+  h2 { margin:0 0 10px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  .kv { display:grid; grid-template-columns: 110px 1fr; gap:4px 10px; }
+  .kv div:nth-child(odd) { color:var(--muted); }
+  .hash { word-break:break-all; color:var(--accent); font-size:11px; }
+  .scenario { margin:0 0 18px; }
+  .scenario h3 { margin:0 0 6px; font-size:12px; color:var(--paper); }
+  .step { display:grid; grid-template-columns: 22px 150px 1fr; gap:8px; padding:3px 0; border-bottom:1px dashed #222; }
+  .step .who { color:var(--muted); font-size:11px; }
+  .step .what small { display:block; color:var(--muted); }
+  .ok { color:var(--green); } .blocked { color:var(--red); font-weight:700; } .warn { color:var(--amber); } .info { color:var(--muted); }
+  .card { border:1px solid var(--border); background:var(--panel); padding:10px 12px; margin-bottom:12px; }
+  .card h3 { margin:0 0 6px; font-size:12px; }
+  .money { display:grid; grid-template-columns: 1fr auto; gap:2px 12px; }
+  .money .missing { color:var(--red); font-weight:700; }
+  .strong { border-color:var(--accent); }
+  .sim { color:var(--amber); font-size:11px; }
+  .note { color:var(--muted); font-size:11px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scrip: purchase-bound controls for agent cards <span class="badge">ALL RAIL ACTORS SIMULATED</span></h1>
+  <p>approve → authorize → verify → recover. One approved purchase record is used by the card, the issuer gate, the fulfillment check, the receipt, and the recovery packet.</p>
+</header>
+<main>
+  <section id="approval">
+    <h2>Approval: exactly what the person authorized</h2>
+    <div id="approval-body" class="kv"><div>status</div><div>waiting…</div></div>
+    <p class="note">The agent proposes; a pure check refuses any proposal whose fingerprint differs. The card is bound to the mission's fingerprint, not the agent's proposal.</p>
+  </section>
+  <section id="timeline">
+    <h2>Purchase timeline: attempted charge, decision, payment, fulfillment</h2>
+    <div id="timeline-body"></div>
+  </section>
+  <section id="receipt">
+    <h2>Receipt / recovery: matched, failed, spent, returned, still missing</h2>
+    <div id="receipt-body"><div class="note">Receipts appear as each scenario settles.</div></div>
+  </section>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const titles = {
+    'approve': 'Approval',
+    'correct': '1. Correct purchase, integrated merchant',
+    'violations': '2. Merchant / amount / currency / window violations',
+    'order-mismatch': '3. Same merchant, same price, wrong dates: blocked before capture',
+    'no-integration/detector': '4a. Not integrated: caught afterward, case opened by detection',
+    'no-integration/consumer': '4b. Not integrated: caught afterward, case opened by the person',
+  };
+  const money = n => '$' + Number(n).toFixed(2);
+  let fixture;
+  const source = new EventSource('/events');
+  source.addEventListener('fixture', e => { fixture = JSON.parse(e.data); });
+  source.addEventListener('approval', e => {
+    const a = JSON.parse(e.data); const b = fixture.approved;
+    $('approval-body').innerHTML = `
+      <div>hotel</div><div>${b.hotelName}, ${b.roomType}</div>
+      <div>dates</div><div>${b.startsOn} → ${b.endsOn}</div>
+      <div>merchant</div><div>${b.merchant}</div>
+      <div>total</div><div>${money(b.total)} (cap $550.00)</div>
+      <div>refundable</div><div>until ${b.refundableUntil}</div>
+      <div>agent version</div><div>${a.agentVersionId.slice(0,8)} <span class="info">(self_declared)</span></div>
+      <div>purchase fingerprint</div><div class="hash">${a.purchaseDigest}</div>
+      <div>contract hash</div><div class="hash">${a.hash}</div>`;
+  });
+  const groups = {};
+  source.addEventListener('step', e => {
+    const s = JSON.parse(e.data);
+    if (!groups[s.scenario]) {
+      const wrap = document.createElement('div'); wrap.className = 'scenario';
+      wrap.innerHTML = `<h3>${titles[s.scenario] ?? s.scenario}</h3>`;
+      $('timeline-body').appendChild(wrap); groups[s.scenario] = wrap;
+    }
+    const mark = { ok: '✓', blocked: '✗', warn: '!', info: '·' }[s.outcome ?? 'info'];
+    const row = document.createElement('div'); row.className = 'step';
+    row.innerHTML = `<div class="${s.outcome ?? 'info'}">${mark}</div><div class="who">${s.actor}</div><div class="what">${s.label}${s.detail ? `<small>${s.detail}</small>` : ''}</div>`;
+    groups[s.scenario].appendChild(row);
+    row.scrollIntoView({ block: 'nearest' });
+  });
+  function receiptCard(title, r, opts = {}) {
+    const rec = r.finalReceipt ?? r.receipt;
+    const matched = r.assessment === 'success' ? 'booking and payment match the approved purchase' :
+      r.captureCount === 0 ? 'nothing captured' : 'fulfillment differs from the approved purchase (dates)';
+    const failed = r.assessment === 'success' ? 'none' : r.captureCount === 0 ? (r.mismatchReasons ? r.mismatchReasons.join('; ') : 'declined') : 'startsOn, endsOn';
+    return `<div class="card ${opts.strong ? 'strong' : ''}">
+      <h3>${title}</h3>
+      <div class="kv"><div>matched</div><div>${matched}</div><div>failed</div><div>${failed}</div>
+        <div>issuer decision</div><div>${r.decisions.map(d => d.approved ? `approved (${d.tier})` : `declined (${d.tier}): ${d.reasons.join('; ')}`).join('<br>')}</div>
+        ${r.recovery ? `<div>recovery case</div><div>opened by ${r.recovery.packet.openedBy}; refund requested: ${r.recovery.refundRequested}<br><span class="hash">packet ${r.recovery.packet.packetDigest}</span></div>` : ''}
+      </div>
+      <div class="money" style="margin-top:8px">
+        <div>money spent</div><div>${money(rec.captured)}</div>
+        <div>money returned</div><div>${money(rec.refunded)}</div>
+        <div>still missing</div><div class="${rec.unrecovered > 0 ? 'missing' : ''}">${money(rec.unrecovered)}</div>
+        ${r.finalReceipt ? `<div>before refund posted</div><div class="missing">${money(r.receipt.unrecovered)} missing, refund pending</div>` : ''}
+        <div>mission</div><div>${rec.status}</div>
+      </div>
+      ${opts.note ? `<div class="note">${opts.note}</div>` : ''}
+    </div>`;
+  }
+  source.addEventListener('result', e => {
+    const r = JSON.parse(e.data);
+    $('receipt-body').innerHTML =
+      receiptCard('1. Correct purchase', r.correct) +
+      receiptCard('2. Violations declined; correct charge captured once', r.violations) +
+      receiptCard('3. Wrong dates, blocked before capture', r.orderMismatch, { strong: true, note: 'Right merchant, right amount, wrong purchase. Possible only because the merchant sent an authenticated order.' }) +
+      receiptCard('4a. Wrong dates, not integrated, detected afterward', r.noIntegration.detector, { strong: true, note: 'Exact-purchase enforcement was unavailable at authorization. Caught by fulfillment evidence; the case gathers evidence and asks; it does not decide fault or file a dispute.' }) +
+      receiptCard('4b. Same, case opened by the person', r.noIntegration.consumer);
+  });
+  source.addEventListener('error', e => { if (e.data) $('timeline-body').innerHTML += `<div class="blocked">${JSON.parse(e.data).message}</div>`; });
+  source.addEventListener('done', () => source.close());
+</script>
+</body>
+</html>

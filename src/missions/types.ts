@@ -149,6 +149,7 @@ type EventBody =
   | { type: 'recovery_requested'; data: { action: 'cancel' | 'refund'; key: string } }
   | { type: 'refund_pending'; data: { externalId: string; key: string } }
   | { type: 'dispute_approval_requested'; data: { statement: string; hash: string } }
+  | { type: 'recovery_case_opened'; data: { caseId: string; openedBy: 'consumer' | 'detector'; packetDigest: string; refundRequested: boolean } }
   | { type: 'mission_revoked'; data: Record<string, never> }
   | { type: 'authority_stopped'; data: Record<string, never> }
   | { type: 'task_settled'; data: TaskReceipt };

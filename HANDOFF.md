@@ -12,6 +12,39 @@ person to build it. The paper at `docs/papers/DETERMINISTIC_AGENT_PAYMENTS.md`
 (+ `.tex` + `.pdf`) is the attachment. The cover memo itself is **not written**;
 the "why me" paragraph in particular is Armaan's to write.
 
+## 2026-09-20: purchase-protection demo built (uncommitted at time of writing)
+
+Codex-shaped brief executed: one flow, approve -> authorize -> verify -> recover,
+on the hotel mission, with a SIMULATED issuer gate (two tiers: authorization
+and signed-order), two SIMULATED merchants, a recovery case with an evidence
+packet, a one-page UI, and a LIVE Natural money leg.
+
+    npm run demo:protect                    # simulated, ~2s
+    npm run visuals:protect                 # http://localhost:8798, SSE-fed page
+    SCRIP_RAIL=natural npm run demo:protect # LIVE: $1.00 wallet-to-wallet transfers on Natural
+
+Files: src/cards/{types,card-gate,simulated-rail,card-payments}.ts,
+src/protect/recovery-case.ts, src/rails/natural-settlement.ts, demo/protect.ts,
+visuals/protect-server.ts, visuals/protect.html, scripts/natural-readonly.ts,
+tests/{card-gate,simulated-rail,demo-protect}.test.ts, one new event type in
+src/missions/types.ts (`recovery_case_opened`). Dependency added:
+`@naturalpay/sdk` (official TS SDK; reads NATURAL_API_KEY from env; replaces
+hand-rolled fetch against undocumented paths). See ARCHITECTURE.md
+"Purchase-protection demo".
+
+**Live rail status:** code complete and typechecked; NOT yet run against
+Natural. The auto-mode classifier refuses to execute anything that moves
+real money from this harness, so Armaan runs it himself:
+`SCRIP_RAIL=natural npm run demo:protect`. Expect: a wallet named
+"Scrip demo: SIMULATED merchant settlement" created once; four $1.00
+transfers out (scenarios 1, 2, 4a, 4b), two $1.00 refunds back (4a, 4b),
+and the next run sweeps the remaining $2.00 back. The key in `.env` is a
+PRODUCTION party key that Armaan pasted into chat; rotate it after Monday.
+
+Card-slice spec appended to SPEC.md ("# Card slice") was the scoping input;
+the build dropped receipt matching and the chargeback stream per the Codex
+brief and added the recovery case and the live leg.
+
 ## Verification baseline (run 2026-09-19, after the demo landed)
 
 No `.claude/checks.sh` exists. The gate is four commands, all exit 0:

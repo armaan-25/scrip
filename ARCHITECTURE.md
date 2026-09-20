@@ -216,6 +216,78 @@ registry behaving as documented above. `FakeProviders` in the demo file
 stands in for a payment rail and a merchant, and its `mode` switch is what
 produces the paid-but-not-delivered scenario.
 
+## Purchase-protection demo: card slice, recovery case, live Natural money leg
+
+`demo/protect.ts` (`npm run demo:protect`) and `visuals/protect-server.ts`
+(`npm run visuals:protect`, one page at `visuals/protect.html` fed by
+server-sent events). One flow, approve -> authorize -> verify -> recover,
+on the existing hotel mission. `PurchaseMissionService`, the assessor, the
+registry, and `lease.ts` are unchanged. All rail-side actors are labeled
+SIMULATED in their type names and on the page.
+
+File ownership:
+
+- `src/cards/types.ts`: `CardBinding` (what an issuer stores at issuance:
+  merchant id and descriptors, ceiling, exact total, window, single-use
+  status, and `purchaseDigest = sha256(canonical(contract.purchase))`),
+  `SignedMerchantOrder`, `CardAuthorizationRequest`, `CardAuthorizationDecision`.
+- `src/cards/card-gate.ts`: pure. `authorizeCard()` is the authorization
+  tier (merchant descriptor, amount, currency, window, single use);
+  `verifyMerchantOrder()` is the order tier (HMAC signature, recomputed
+  digest, equality with the binding's digest, exact amount). It imports
+  nothing from the mission service, registry, or store; a test in
+  `tests/card-gate.test.ts` enforces that boundary by reading the imports.
+  The gate only ever sees what was stamped on the binding, because that is
+  the only channel a real issuer has.
+- `src/cards/simulated-rail.ts`: `SimulatedIssuer` (holds bindings, runs the
+  gate, captures, refunds, logs every decision; a declined authorization
+  produces no payment fact because nothing moved), `SimulatedAcceptMerchant`
+  (sends a signed order with each authorization; fulfillment via merchant
+  API), `SimulatedWebMerchant` (no order; fulfillment arrives later as a
+  parsed confirmation email).
+- `src/cards/card-payments.ts`: `CardPaymentCapabilityProvider` adapts the
+  issuer to the existing `PaymentCapabilityProvider`; the capability handed
+  to the agent is a card reference. The binding's digest is computed from
+  the `ExecutionRequest` booking, which `execute()` only builds after
+  `preflight()` proved it canonically equal to the approved purchase.
+- `src/protect/recovery-case.ts`: `buildEvidencePacket()` (approved
+  contract hash, purchase digest, agent version, payment facts, fulfillment
+  evidence, per-field mismatches, money position) and `openRecoveryCase()`
+  (appends `recovery_case_opened`; asks the merchant for a refund through
+  the existing `requestRecovery()` only where the approved policy allows).
+  It never decides fault and never files a dispute.
+- `src/rails/natural-settlement.ts`: `NaturalSettlementProvider` wraps the
+  simulated card provider. Natural has no card product, so it sits on the
+  money-facts boundary only: each simulated capture becomes a real $1.00
+  wallet-to-wallet transfer on the account behind `NATURAL_API_KEY`, tagged
+  with the purchase digest and operation key, and the ledger's payment fact
+  carries Natural's transfer id. Refunds are the reverse transfer; a run
+  starts by sweeping the simulated-merchant wallet back so it nets to zero.
+  Enabled by `SCRIP_RAIL=natural`. It is an evaluation of how the layer sits
+  on Natural's rail, not a product built on it.
+
+```text
+approve   person approves contract -> renderContract() hash + purchaseDigest()
+          registry: lineage/version/credential/mandate bound to the hash
+authorize execute() -> preflight() on the agent's candidate -> claim + reserve
+          -> CardPaymentCapabilityProvider.issue() -> SimulatedIssuer.issue(binding)
+          -> SimulatedCheckout.start() -> merchant.checkout(cardRef, what it sells)
+          -> SimulatedIssuer.authorize() -> authorizeCard() [+ verifyMerchantOrder()]
+          -> approve: capture (+ live Natural transfer when SCRIP_RAIL=natural)
+          -> decline: no fact; operator cancels the mission
+verify    reconcile() -> getFacts() + getEvidence() -> assessOutcome()
+recover   openRecoveryCase() -> packet -> requestRecovery('refund') -> refund_pending
+          -> issuer.refund() [+ live reverse transfer] -> reconcile() -> unrecovered 0
+```
+
+Why the gate takes a digest and not the contract: a real issuer would not
+hold the consumer's contract, only what was bound at issuance. The cost is
+that the gate cannot say which field differed; the assessor, on Scrip's
+side, does. Why the purchase digest is distinct from the contract hash: a
+merchant can only hash the order it sees, so `renderContract().hash` (goal,
+constraints, policy) and `purchaseDigest()` (the booking alone) are two
+different fingerprints and must not be conflated.
+
 ## What this is
 
 Scrip authorizes, meters, and settles autonomous work. The core unit is a
