@@ -775,3 +775,385 @@ Primary and official sources reviewed for this specification:
 - Checkout.com consumer and merchant research: https://www.checkout.com/newsroom/consumer-demand-for-ai-shopping-is-forming-fast-but-trust-for-agentic-commerce-is-still-catching-up
 
 Public product pages establish declared capability and positioning, not reliability, volume, regulatory approval for Scrip's use case, or willingness to partner. Those claims must be reverified during provider selection.
+
+---
+
+# Card slice: intent-bound authorization for a card rail
+
+Scoped 2026-09-19. This section is self-contained and executable in a fresh
+session. It builds on the hotel mission slice (`src/missions/`) and the agent
+registry as committed at `5c07c79`, and on the demo committed at `9a05375`.
+Everything above this line is the product contract; nothing above changes.
+
+## Problem
+
+The existing slice gates a purchase on the agent's *proposal*: `execute()`
+runs `preflight()` over the candidate the agent hands it, then issues an
+abstract single-use capability. On a card rail the issuer sees a second,
+independent event the proposal never covers: the network authorization
+request, carrying merchant descriptor, MCC, amount, and (only when the
+merchant's checkout supplies it) the cart. Natural's announced Cards product
+will inherit MCC-and-limit controls, which bound category and amount; every
+incident in the paper passed those. The slice adds the issuer-side gate that
+a card product would run, in two tiers, and shows the difference between a
+merchant that supplies cart context (Accept) and one that does not.
+
+Half of this exists already: `src/ramp-agent-card.ts` defines `CardIssuer`
+and `MockCardIssuer`, and `TaskAuthorizationManager.reserveCardPurchase()`
+mints a card capped at the reservation. What does not exist anywhere is code
+that *receives* an authorization request and decides. That is this slice.
+
+## Domain boundary: what runs at the issuer
+
+This slice is a pitch that Natural could run the gate. So the gate must be
+written as issuer-side code, with issuer-side inputs only. The split:
+
+| runs at Scrip (the operator's side) | runs at the issuer (Natural's side) |
+|---|---|
+| PROPOSE, RATIFY, `preflight()` on the agent's candidate | store the `CardBinding` created at issuance |
+| decide to request a card; supply the binding fields | receive the network authorization; run `authorizeCard()` |
+| hold the contract, the registry, the mission store | receive cart context from its own Accept merchant; run `authorizeCart()` |
+| `assessOutcome()` over payment + fulfillment + dispute evidence | freeze on revoke; capture; refund; forward chargebacks |
+| receipt matching (`matchReceipt`) for off-Accept merchants | nothing about receipts; an issuer never sees the email |
+
+Hard rule, enforced by a test (Behavior 15): `src/cards/card-gate.ts` and
+`src/cards/card-rail.ts` import nothing from `src/missions/` except the
+`HotelBooking` type and the `canonical()` function. No `OutcomeContract`, no
+`SqliteAgentRegistry`, no `SqliteMissionStore`, no `PurchaseMissionService`.
+If the gate needs something it does not have, the answer is to put it on the
+`CardBinding` at issuance, because that is the only channel an issuer has.
+
+Two consequences worth stating. First, the gate cannot say *which* field of
+the order was wrong; it can only say the digest differs. The explanation
+comes from the assessor, on Scrip's side, which holds the contract. Second,
+the cart tier exists only because Natural would own both the card and the
+merchant's checkout. For any other issuer the cart column is empty, and the
+demo's web-merchant scenario is what every card product in the market does
+today.
+
+## Out of scope
+
+- Any real rail. No Natural, no Ramp, no network. Fake issuer, fake network,
+  fake merchants only. Natural Cards has no published schema and the AUP
+  forbids wiring Natural in as a rail.
+- Generalizing `HotelBooking`. The hotel stays the only purchase category.
+- HTTP routes and webhooks. Network and merchant events are in-process calls
+  on the fake rail.
+- Real receipt parsing. `ReceiptIngestion` accepts an already-typed receipt;
+  the LLM/PDF step that would produce it is stubbed by the fixture.
+- Changing `TaskAuthorizationManager` or `src/ramp-agent-card.ts`. The new
+  module stands beside them; `reserveCardPurchase()` is not called.
+- Persisting rail state. `FakeCardRail` is in-memory. A real issuer persists
+  bindings; that is its job, not Scrip's.
+- Agent-version pin on the card binding. Version authority is already
+  enforced at `pre_reservation` and `pre_dispatch` by `checkAuthority()`;
+  the binding carries the operation key, which the mission ties to a version.
+- Standing mandates, repeat purchases, multi-item carts, partial capture.
+
+## Interface
+
+New module `src/cards/`. All money is a JS number in USD, as in
+`src/missions/`. All timestamps are ISO strings.
+
+```ts
+// src/cards/types.ts
+
+/** What the issuer holds for one single-use card. Enough to decide an
+ *  authorization without the contract: the digest stands in for it. */
+export interface CardBinding {
+  cardRef: string;                 // opaque, rail-issued; doubles as capabilityRef
+  last4: string;
+  operationKey: string;            // PurchaseOperation.key
+  /** sha256(canonical(contract.purchase)) - the exact HotelBooking, not the
+   *  whole contract, because a merchant can only hash the order it sees. */
+  purchaseDigest: string;
+  merchantDescriptors: string[];   // network-visible names allowed to charge
+  ceiling: number;                 // contract.maximumTotal
+  exactTotal: number;              // contract.purchase.total
+  currency: 'USD';
+  notBefore: string;
+  expiresAt: string;
+  singleUse: true;
+  status: 'active' | 'used' | 'frozen';
+}
+
+export interface CartContext {
+  merchantId: string;
+  orderRef: string;
+  booking: HotelBooking;           // from src/missions/types.ts
+  digest: string;                  // merchant-computed sha256(canonical(booking))
+}
+
+export interface CardAuthorizationRequest {
+  authRef: string;
+  cardRef: string;
+  merchantDescriptor: string;
+  mcc: string;
+  amount: number;
+  currency: 'USD';
+  occurredAt: string;
+  cart?: CartContext;              // present only from an Accept merchant
+}
+
+export type CardAuthorizationDecision =
+  | { approved: true;  tier: 'auth' | 'cart'; authRef: string }
+  | { approved: false; tier: 'auth' | 'cart'; authRef: string; reasons: string[] };
+
+export interface DisputeReason { category: 'notReceived' | 'other'; networkCode: string; description: string }
+
+export interface DisputeObservation {
+  externalId: string; operationKey: string; authRef: string;
+  amount: number; currency: 'USD'; reason: DisputeReason; occurredAt: string;
+}
+
+/** An already-typed receipt, as a parser would produce it. */
+export interface TypedReceipt {
+  receiptRef: string;
+  merchantDescriptor: string;
+  last4: string;
+  amount: number;
+  currency: 'USD';
+  booking: HotelBooking;
+  receivedAt: string;
+}
+```
+
+```ts
+// src/cards/card-gate.ts   (pure; no I/O, no clock other than `now`)
+
+export function purchaseDigest(booking: HotelBooking): string;   // sha256(canonical(booking))
+
+/** Auth tier. Never looks at the cart. */
+export function authorizeCard(binding: CardBinding, request: CardAuthorizationRequest, now: Date): CardAuthorizationDecision;
+
+/** Cart tier. Called by authorizeCard when request.cart is present; also
+ *  exported for direct testing. Recomputes the cart digest from cart.booking
+ *  so a merchant cannot send a matching digest over a different order. */
+export function authorizeCart(binding: CardBinding, request: CardAuthorizationRequest & { cart: CartContext }, now: Date): CardAuthorizationDecision;
+```
+
+`authorizeCard` reasons, in evaluation order, all accumulated (never
+short-circuited except on unknown card):
+
+| check | reason string |
+|---|---|
+| `binding.status !== 'active'` | `Card is ${status}` |
+| `now < notBefore` or `now >= expiresAt` | `Card window closed` |
+| `request.currency !== binding.currency` | `Currency mismatch` |
+| `!merchantDescriptors.includes(request.merchantDescriptor)` | `Merchant descriptor not permitted` |
+| `request.amount > binding.ceiling` | `Amount exceeds ceiling` |
+| cart present → delegate to `authorizeCart` | (see below) |
+
+`authorizeCart` adds, after the auth-tier checks pass:
+
+| check | reason string |
+|---|---|
+| `purchaseDigest(cart.booking) !== cart.digest` | `Cart digest does not match its contents` |
+| `cart.digest !== binding.purchaseDigest` | `Cart does not match the approved purchase` |
+| `request.amount !== binding.exactTotal` | `Amount differs from the approved total` |
+
+Tier in the decision is `'cart'` when a cart was present, else `'auth'`.
+
+```ts
+// src/cards/card-rail.ts   (the fake issuer + network + two merchants)
+
+export class FakeCardRail {
+  issue(input: Omit<CardBinding, 'cardRef' | 'last4' | 'status'>): CardBinding;
+  freeze(cardRef: string): void;
+  /** Runs authorizeCard. On approve marks the card 'used' and records the auth. */
+  authorize(request: Omit<CardAuthorizationRequest, 'authRef'>): CardAuthorizationDecision;
+  capture(authRef: string): PaymentFact;                    // kind 'captured'
+  refund(authRef: string, amount: number): PaymentFact;      // kind 'refunded', same transactionRef
+  chargeback(authRef: string, reason: DisputeReason): DisputeObservation;
+  facts(operationKey: string): PaymentFact[];                // declined auth => one 'unpaid' fact, amount 0
+  disputes(operationKey: string): DisputeObservation[];
+  binding(cardRef: string): CardBinding | undefined;
+  bindingsByLast4(last4: string): CardBinding[];
+}
+
+/** Merchant on Accept: sends CartContext with the authorization and, on
+ *  capture, emits BookingEvidence with source 'merchant'. */
+export class FakeAcceptMerchant {
+  constructor(rail: FakeCardRail, options: { merchantId: string; descriptor: string; mcc: string });
+  checkout(cardRef: string, booking: HotelBooking): { decision: CardAuthorizationDecision; evidence?: BookingEvidence };
+}
+
+/** Merchant off Accept: authorizes without a cart and, on capture, emits a
+ *  TypedReceipt (what a confirmation email would parse to). */
+export class FakeWebMerchant {
+  constructor(rail: FakeCardRail, options: { descriptor: string; mcc: string });
+  checkout(cardRef: string, booking: HotelBooking): { decision: CardAuthorizationDecision; receipt?: TypedReceipt };
+}
+```
+
+```ts
+// src/cards/receipts.ts   (pure)
+
+/** Matches a typed receipt to a binding by last4 + descriptor + amount.
+ *  Returns BookingEvidence with source 'email', or undefined when no
+ *  binding matches (caller logs and drops). */
+export function matchReceipt(receipt: TypedReceipt, bindings: CardBinding[], verifiedAt: string): BookingEvidence | undefined;
+```
+
+```ts
+// src/cards/card-payments.ts
+
+/** Adapts FakeCardRail to the existing PaymentCapabilityProvider so
+ *  PurchaseMissionService is unchanged. capabilityRef === cardRef. */
+export class CardPaymentCapabilityProvider implements PaymentCapabilityProvider {
+  constructor(rail: FakeCardRail, merchantDescriptors: (booking: HotelBooking) => string[]);
+  issue(request): Promise<{ capabilityRef: string }>;       // builds the CardBinding from ExecutionRequest
+  getFacts(operationKey): Promise<PaymentFact[]>;
+  getDisputes(operationKey): Promise<DisputeObservation[]>;  // new optional provider method, see below
+  revoke(operationKey): Promise<void>;                       // freeze
+  requestRecovery(request): Promise<{ externalId: string }>; // records intent; the demo posts the refund explicitly
+}
+```
+
+Minimal changes to `src/missions/` (the only ones):
+
+```ts
+// src/missions/types.ts
+type EventBody = ... | { type: 'dispute_observed'; data: DisputeObservation };
+interface PaymentCapabilityProvider { ...; getDisputes?(operationKey: string): Promise<DisputeObservation[]>; }
+
+// src/missions/purchase-mission-service.ts
+async recordDispute(consumerId, missionId, input: DisputeObservation): Promise<void>;  // validates operationKey, dedupes on externalId, appends
+// reconcile(): if payments.getDisputes exists, fetch and recordDispute each.
+
+// src/missions/outcome-assessor.ts
+// assessOutcome(): disputes = events of type 'dispute_observed' with reason.category === 'notReceived'.
+//   if disputes.length && good.length  -> { status: 'unknown', reasons: ['Cardholder dispute conflicts with merchant confirmation; consumer review required'] }
+//   if disputes.length && !good.length -> { status: 'failure', reasons: ['Cardholder disputed non-receipt'] }
+//   evaluated before the existing conflicting-evidence check.
+```
+
+New script in `package.json`: `"demo:cards": "tsx demo/cards.ts"`.
+
+## Files
+
+| file | change |
+|---|---|
+| `src/cards/types.ts` | New. `CardBinding`, `CartContext`, `CardAuthorizationRequest`, `CardAuthorizationDecision`, `DisputeReason`, `DisputeObservation`, `TypedReceipt`. |
+| `src/cards/card-gate.ts` | New. Pure `purchaseDigest()`, `authorizeCard()`, `authorizeCart()`. Imports `canonical` from `src/missions/outcome-assessor.ts`. |
+| `src/cards/card-rail.ts` | New. `FakeCardRail`, `FakeAcceptMerchant`, `FakeWebMerchant`. In-memory Maps. |
+| `src/cards/receipts.ts` | New. Pure `matchReceipt()`. |
+| `src/cards/card-payments.ts` | New. `CardPaymentCapabilityProvider`. |
+| `src/missions/types.ts` | Add `dispute_observed` event body; add optional `getDisputes` to `PaymentCapabilityProvider`. |
+| `src/missions/purchase-mission-service.ts` | Add `recordDispute()`; `reconcile()` fetches disputes when the provider exposes them. No other change. |
+| `src/missions/outcome-assessor.ts` | `assessOutcome()` gains the two dispute branches above. `preflight()` untouched. |
+| `demo/cards.ts` | New. Three scenarios (Behavior 10 to 12). Exports `runCardsDemo(log)`. |
+| `tests/card-gate.test.ts` | New. Pure gate cases (Behavior 1 to 6). |
+| `tests/card-rail.test.ts` | New. Issue, authorize, single-use, freeze, capture, refund, chargeback, receipt matching (Behavior 7 to 9). |
+| `tests/demo-cards.test.ts` | New. Runs `runCardsDemo(() => {})` and asserts the three scenario outcomes. |
+| `package.json` | Add `demo:cards`. |
+| `ARCHITECTURE.md` | After implementation: a "Card slice" section with the file map and the two-tier flow. |
+| `LEARNING.md` | After implementation: why the gate takes a digest instead of the contract; why the cart digest is recomputed. |
+
+Fourteen files. This is a session, not a single change.
+
+## Behavior
+
+Gate (pure):
+
+1. Given an active binding and an auth request with a permitted descriptor, amount at most the ceiling, inside the window, no cart, when `authorizeCard` runs, then the decision is `{ approved: true, tier: 'auth' }`.
+2. Given the same request with `amount > ceiling`, then `{ approved: false, tier: 'auth', reasons: ['Amount exceeds ceiling'] }`.
+3. Given a request whose `merchantDescriptor` is not in `merchantDescriptors`, then declined with `'Merchant descriptor not permitted'`.
+4. Given a binding whose `status` is `'used'` or `'frozen'`, then declined with `'Card is used'` / `'Card is frozen'` and no further reasons.
+5. Given a cart whose `booking` has dates 09-19..09-21 against a binding whose `purchaseDigest` was computed over 09-18..09-20, with amount equal to `exactTotal`, then `{ approved: false, tier: 'cart', reasons: ['Cart does not match the approved purchase'] }`. This is the demo's screen.
+6. Given a cart whose `digest` field matches the binding but whose `booking` hashes to something else, then declined with `'Cart digest does not match its contents'` (the merchant lied about the digest).
+
+Rail (fake):
+
+7. Given an issued card, when `authorize` approves, then `binding(cardRef).status === 'used'`, and a second `authorize` on the same card is declined with `'Card is used'`.
+8. Given an approved auth, when `capture(authRef)` runs, then `facts(operationKey)` contains one `captured` fact with the auth amount; when `refund(authRef, n)` runs, a `refunded` fact with the same `transactionRef` is appended.
+9. Given a `TypedReceipt` whose `last4`, `merchantDescriptor`, and `amount` match one binding, when `matchReceipt` runs, then it returns `BookingEvidence` with `source: 'email'`, `operationKey` from the binding, and `booking` from the receipt; given no match, `undefined`.
+
+Demo (`demo/cards.ts`), all three scenarios ratify the same hotel contract used in `demo/deterministic-authorization.ts` (duplicate the fixture; do not import from the other demo), with `merchantDescriptors = ['BOSTON HARBOR HOTEL']`:
+
+10. **Accept merchant, cart drift.** The agent passes the correct candidate to `execute()` (preflight passes, card issued). `FakeAcceptMerchant` is configured with `driftDates: true`, so its cart carries 09-19..09-21. When it checks out, `authorize` is declined at tier `cart` per Behavior 5, the rail records one `unpaid` fact, and `reconcile()` assesses `failure` with `captured 0`, `unrecovered 0`. Screen shows: descriptor permitted, amount under ceiling, credential authentic, cart digest mismatch, `capture() calls: 0`.
+11. **Web merchant, same drift, no cart.** Same setup with `FakeWebMerchant` (`driftDates: true`). `authorize` approves at tier `auth` (the auth message cannot see dates), `capture` posts $500, the merchant emits a receipt for 09-19..09-21, `matchReceipt` produces `BookingEvidence` source `email`, and `assessOutcome` returns `failure` with `unrecovered 500`. `requestRecovery('refund')` then `rail.refund(authRef, 500)` then `reconcile()` brings `unrecovered` to 0 and `mission.status` to `refunded`.
+12. **Accept merchant, correct, then chargeback.** No drift. Approved at tier `cart`, captured, `BookingEvidence` source `merchant` confirmed, assessed `success`. Then `rail.chargeback(authRef, { category: 'notReceived', networkCode: '13.1', description: 'Merchandise or services not received' })` and `reconcile()`: assessment becomes `unknown` with the conflict reason, and `authority_stopped` is appended.
+
+Service:
+
+13. Given a `dispute_observed` with an `externalId` already recorded, when `recordDispute` runs, then nothing is appended (dedupe on `externalId`, same as payment facts).
+14. Given a dispute whose `operationKey` differs from the mission's, then `recordDispute` throws `'Dispute belongs to another operation'`.
+
+Domain boundary:
+
+15. Given the source text of `src/cards/card-gate.ts` and `src/cards/card-rail.ts`, when every `import` line is inspected, then the only `../missions/` imports are `type HotelBooking` (and `type BookingEvidence`, `type PaymentFact` in the rail) from `types.js` and `canonical` from `outcome-assessor.js`. Any import of `agent-registry`, `mission-store`, or `purchase-mission-service` fails the test.
+
+## Failure modes
+
+| dependency fails | behavior | state left behind |
+|---|---|---|
+| `rail.issue()` throws inside `payments.issue()` | existing `execute()` path: caught, `operation_pending` appended, reservation kept | mission `outcome_pending`; no card exists; `reconcile()` finds no facts and stays `pending` |
+| auth arrives after `revoke()` froze the card | declined `'Card is frozen'`; rail records `unpaid` | mission assesses `failure` with $0 captured |
+| auth arrives after `expiresAt` | declined `'Card window closed'` | same |
+| second auth on a used card (merchant retry) | declined `'Card is used'`; no second fact | first auth's facts unchanged |
+| merchant sends cart with forged digest | Behavior 6 decline | `unpaid` fact |
+| receipt matches no binding | `matchReceipt` returns `undefined`; caller logs and drops | no evidence appended; mission stays `pending` awaiting evidence |
+| receipt matches two bindings (same last4, descriptor, amount) | `matchReceipt` returns `undefined` and the caller logs ambiguity; never guesses | as above |
+| capture amount differs from `exactTotal` (auth tier only; e.g. $480) | captured, then existing assessor rule `'Captured payment differs from the approved purchase'` → `failure` | `unrecovered` = captured amount |
+| chargeback arrives with no capture on record | `recordDispute` appends; assessor sees no `good`, returns `failure` | `unrecovered` unchanged (0) |
+| process crashes mid-scenario | mission store is durable; `FakeCardRail` state is lost | `reconcile()` on restart finds no facts → `pending`. Out of scope to fix; a real issuer persists |
+| concurrent `authorize` on one card | not possible: single-threaded in-process fake | n/a; a real issuer serializes per card |
+
+## Verification
+
+```
+npm run build          # exit 0
+npx tsc --noEmit       # exit 0
+npm test               # exit 0; expect 253 + N passed, 8 skipped, where N ≥ 14 new cases across the three new files
+npm run demo:cards     # exit 0
+```
+
+`npm run demo:cards` must print, for scenario 10, a block containing all of:
+
+```
+tier: cart
+Cart does not match the approved purchase
+capture() calls: 0
+```
+
+and for scenario 11 a line containing `unrecovered $500.00` followed later by `unrecovered $0.00`, and for scenario 12 the assessment `unknown` after the chargeback.
+
+`tests/demo-cards.test.ts` asserts, from the returned result object:
+
+```
+acceptDrift.decision.tier === 'cart' && acceptDrift.decision.approved === false
+acceptDrift.captureCalls === 0
+webDrift.decision.approved === true && webDrift.decision.tier === 'auth'
+webDrift.assessmentBeforeRefund === 'failure' && webDrift.unrecoveredBeforeRefund === 500
+webDrift.unrecoveredAfterRefund === 0
+clean.assessmentBeforeChargeback === 'success'
+clean.assessmentAfterChargeback === 'unknown'
+```
+
+`tests/card-gate.test.ts` covers Behavior 1 to 6 as one `it` each, plus Behavior 15 as a test that reads both source files with `node:fs` and asserts on their import lines. `tests/card-rail.test.ts` covers Behavior 7 to 9 plus the frozen and expired rows of the failure table.
+
+## Decisions taken
+
+**Gate takes a digest, not the contract.** A real issuer would not hold the consumer's contract; it would hold what was bound at issuance. So `CardBinding` carries `purchaseDigest = sha256(canonical(contract.purchase))` and the cart tier is digest equality with recomputation. Cost: the gate cannot explain *which* field differs (dates vs room); the assessor, which does hold the contract, explains that post-hoc. Rejected: passing the `OutcomeContract` into the gate, which would make the fake unrepresentative of what Natural could run.
+
+**Purchase digest, not contract digest.** `renderContract()` hashes goal, constraints, and policy, none of which a merchant sees. The merchant can only hash the order. Two digests therefore exist: the ratification digest (already in `MandateEvidence.renderedSummaryHash`) and the purchase digest on the card. They are not interchangeable and the code must not conflate them.
+
+**Strict at cart tier, ceiling at auth tier.** The auth message cannot distinguish tax from substitution, so it gets only the ceiling. The cart tier has the order, so it demands equality. Capture is then judged by the existing assessor rule, which fails any capture that differs from the approved total. Cost: a real hotel that adds a resort fee at the desk will fail assessment. That is the exact-approval semantics the paper argues for; relaxing it is a product decision recorded in Open questions.
+
+**Chargeback against a confirmed booking is `unknown`, not `failure`.** Merchant says delivered, cardholder says not; the existing rule for conflicting evidence is human review. Treating the dispute as authoritative would let a cardholder override merchant evidence unilaterally.
+
+**New module beside the mission slice, not inside lease.ts.** `reserveCardPurchase()` is Ramp-shaped and lives in the stateful manager. The gate is pure and the rail is a fake; keeping them in `src/cards/` means `PurchaseMissionService` sees only the existing `PaymentCapabilityProvider` boundary. Cost: some duplication with `CardIssueRequest`, which is accepted.
+
+**Cart drift originates at the merchant, not in the proposal.** `execute()` already runs `preflight()` on the agent's candidate, so a wrong-date *proposal* never reaches the card. The scenario that exercises the cart tier is a correct proposal whose checkout drifts (the agent mis-clicks on the merchant page, or availability shifts). The fakes model this with a `driftDates` switch. This is also the honest story: preflight sees the proposal, the gate sees the charge, the assessor sees the outcome, and each catches what the previous one cannot.
+
+**Receipt matching is structured-only.** The fixture supplies a `TypedReceipt`; the parser that would produce one from an email is stubbed. Cost: the demo does not show extraction calibration for receipts, which §7.3 of the paper says is the interesting measurement. Recorded as an open question.
+
+## Open questions
+
+- Natural Cards: does the issuing-side authorization path expose anything from an Accept merchant's charge object (line items, order digest)? If not, the cart tier is a proposal, not a mapping. Ask them; do not infer from the event catalog.
+- Whether a Natural card paying a Natural Accept merchant links both legs on one transaction record. The closed-loop claim depends on this.
+- Tolerance at capture for taxes and fees. Strict equality is specified here; a product would need a declared tolerance in the ratified record, which is a contract-schema change, not a gate change.
+- Should `CardBinding` carry `agentVersionId` so an issuer could decline when the version is revoked between issuance and auth? Deferred: the pre-dispatch check plus `freeze()` on revocation covers it in this slice.
+- Receipt extraction calibration (silent mistyping vs correct refusal) is unmeasured.
+- Whether `FakeCardRail` state should persist to SQLite so a crash mid-scenario is recoverable. Out of scope now; needed before any live-money test.
