@@ -23,11 +23,15 @@ import type { CardPaymentCapabilityProvider } from '../cards/card-payments.js';
 import type { SimulatedIssuer } from '../cards/simulated-rail.js';
 
 const LIVE_CENTS = 100;
-const MERCHANT_WALLET_NAME = 'Scrip demo: SIMULATED merchant settlement';
+/** Natural limits wallet names to 32 characters and descriptions to 100. */
+const MERCHANT_WALLET_NAME = 'Scrip demo: simulated merchant';
 
 interface JsonApi<A> { data: { id: string; attributes: A } }
 interface WalletAttrs { displayName?: string; balance?: { available?: number; total?: number } }
 interface TransferAttrs { status?: string }
+
+const TERMINAL = new Set(['COMPLETED', 'FAILED', 'RETURNED', 'CANCELED', 'APPROVAL_DENIED']);
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export interface LiveSettlement {
   operationKey: string;
@@ -59,7 +63,7 @@ export class NaturalSettlementProvider implements PaymentCapabilityProvider {
       if (!merchant) {
         const created = (await this.client.wallets.create({
           idempotencyKey: 'scrip-demo-merchant-wallet', displayName: MERCHANT_WALLET_NAME,
-          description: 'Receives the live $1.00 settlement for each SIMULATED capture in the Scrip demo. Swept back at the start of every run.',
+          description: 'Receives $1.00 per simulated capture in the Scrip demo; swept back each run.',
           tags: { scrip_role: 'simulated_merchant' },
         })) as unknown as JsonApi<WalletAttrs>;
         merchant = created.data;
@@ -78,7 +82,25 @@ export class NaturalSettlementProvider implements PaymentCapabilityProvider {
       idempotencyKey: `scrip-demo-sweep-${Date.now()}`, amount: cents, sourceWalletId: merchantWalletId, destWalletId: sourceWalletId,
       description: 'Scrip demo reset: sweep simulated-merchant wallet back', tags: { scrip_role: 'demo_sweep' },
     })) as unknown as JsonApi<TransferAttrs>;
+    await this.waitForTransfer(transfer.data.id);
     return { cents, transferId: transfer.data.id };
+  }
+
+  /**
+   * Internal transfers are asynchronous: they are created PROCESSING and
+   * the funds are not available at the destination until COMPLETED. Poll
+   * until terminal or until the timeout, and return the last status seen.
+   */
+  private async waitForTransfer(transferId: string, timeoutMs = 60_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    let status = 'unknown';
+    while (Date.now() < deadline) {
+      const detail = (await this.client.transfers.get({ transferId })) as unknown as JsonApi<TransferAttrs>;
+      status = detail.data.attributes.status ?? 'unknown';
+      if (TERMINAL.has(status)) return status;
+      await sleep(750);
+    }
+    return status;
   }
 
   async balances(): Promise<{ source: number; merchant: number }> {
@@ -130,10 +152,10 @@ export class NaturalSettlementProvider implements PaymentCapabilityProvider {
         scrip_kind: 'capture', scrip_rail_note: 'card and issuer are SIMULATED; this transfer is the money fact',
       },
     })) as unknown as JsonApi<TransferAttrs>;
-    const detail = (await this.client.transfers.get({ transferId: transfer.data.id })) as unknown as JsonApi<TransferAttrs>;
     const live: LiveSettlement = {
-      operationKey, captureTransferId: transfer.data.id, captureStatus: detail.data.attributes.status ?? transfer.data.attributes.status ?? 'unknown', liveCents: LIVE_CENTS,
+      operationKey, captureTransferId: transfer.data.id, captureStatus: await this.waitForTransfer(transfer.data.id), liveCents: LIVE_CENTS,
     };
+    if (live.captureStatus !== 'COMPLETED') throw new Error(`Live capture transfer ${live.captureTransferId} ended ${live.captureStatus}`);
     this.settlements.set(operationKey, live);
     return live;
   }
@@ -148,9 +170,8 @@ export class NaturalSettlementProvider implements PaymentCapabilityProvider {
       idempotencyKey: `scrip-${operationKey}-refund`, amount: live.liveCents, sourceWalletId: merchantWalletId, destWalletId: sourceWalletId,
       description: 'Scrip demo refund: merchant returns funds', tags: { scrip_operation_key: operationKey, scrip_kind: 'refund', scrip_refunds: live.captureTransferId },
     })) as unknown as JsonApi<TransferAttrs>;
-    const detail = (await this.client.transfers.get({ transferId: transfer.data.id })) as unknown as JsonApi<TransferAttrs>;
     live.refundTransferId = transfer.data.id;
-    live.refundStatus = detail.data.attributes.status ?? 'unknown';
+    live.refundStatus = await this.waitForTransfer(transfer.data.id);
     return live;
   }
 

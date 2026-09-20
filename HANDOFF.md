@@ -32,14 +32,26 @@ src/missions/types.ts (`recovery_case_opened`). Dependency added:
 hand-rolled fetch against undocumented paths). See ARCHITECTURE.md
 "Purchase-protection demo".
 
-**Live rail status:** code complete and typechecked; NOT yet run against
-Natural. The auto-mode classifier refuses to execute anything that moves
-real money from this harness, so Armaan runs it himself:
-`SCRIP_RAIL=natural npm run demo:protect`. Expect: a wallet named
-"Scrip demo: SIMULATED merchant settlement" created once; four $1.00
-transfers out (scenarios 1, 2, 4a, 4b), two $1.00 refunds back (4a, 4b),
-and the next run sweeps the remaining $2.00 back. The key in `.env` is a
-PRODUCTION party key that Armaan pasted into chat; rotate it after Monday.
+**Live rail status: RAN SUCCESSFULLY on 2026-09-20 (Armaan ran it from his
+terminal; the harness classifier refuses to move real money).** Seven real
+internal transfers on Natural production, all COMPLETED: one sweep
+(trf_01a0be0e6fff…, $3.00 stranded by an earlier partial run), four $1.00
+captures (trf_…318046, …648530, …9484b3, …5c8d2c), two $1.00 refunds
+(trf_…ccd827, …823a6). Balances after: wallet $3.00, simulated-merchant wallet
+$2.00 (the two captures without refunds; the next run sweeps them back).
+
+Two things learned from the live run, both worth a line in the memo:
+- Internal transfers are asynchronous. They are created PROCESSING and the
+  destination wallet's `available` balance does not include them until
+  COMPLETED (took a few seconds). The first attempt failed the refund with
+  409 insufficient_funds for exactly this reason; the wrapper now polls
+  `transfers.get` until terminal before reporting a fact or reversing.
+- Wallet names are limited to 32 characters, descriptions to 100.
+
+Run it: `SCRIP_RAIL=natural npm run demo:protect` (needs
+`export PATH="$HOME/.nvm/versions/node/v24.11.0/bin:$PATH"` first in a
+fresh shell; the demo loads NATURAL_API_KEY from `.env`). The key in `.env`
+is a PRODUCTION party key that Armaan pasted into chat; rotate it after Monday.
 
 Card-slice spec appended to SPEC.md ("# Card slice") was the scoping input;
 the build dropped receipt matching and the chargeback stream per the Codex

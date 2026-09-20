@@ -17,6 +17,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import chalk from 'chalk';
+
+// The live rail reads NATURAL_API_KEY. Same pattern as demo/run-demo.ts.
+if (fs.existsSync('.env')) process.loadEnvFile('.env');
 import { loadConfig } from '../src/config.js';
 import { CardPaymentCapabilityProvider } from '../src/cards/card-payments.js';
 import { SimulatedAcceptMerchant, SimulatedIssuer, SimulatedWebMerchant, type AuthorizationRecord } from '../src/cards/simulated-rail.js';
