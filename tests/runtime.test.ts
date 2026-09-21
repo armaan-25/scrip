@@ -13,15 +13,15 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
 describe('ScripRuntime', () => {
-  it('wires Ramp policy, task authorizations, and routing', async () => {
-    const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ramp.json'));
-    expect(runtime.config.rampEntityId).toBe('ramp-entity-demo');
+  it('wires budget policy, task authorizations, and routing', async () => {
+    const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ledger.json'));
+    expect(runtime.config.entityId).toBe('scrip-demo');
     expect(await runtime.authorizations.getBudgetRemaining('research')).toBe(100);
-    expect(runtime.getBudget('research').rampBudgetId).toBe('ramp-budget-research');
+    expect(runtime.getBudget('research').budgetId).toBe('budget-research');
   });
 
   it('rejects an unknown budget', () => {
-    const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ramp.json'));
+    const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ledger.json'));
     expect(() => runtime.getBudget('unknown')).toThrow('Unknown budget');
   });
 });

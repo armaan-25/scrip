@@ -3,11 +3,11 @@ import type { ScripRuntime } from './runtime.js';
 
 export async function getBudgetPolicy(runtime: ScripRuntime, budgetName: string) {
   const budget = runtime.getBudget(budgetName);
-  // Always the label - RampApiGateway resolves it to a real Fund ID itself
+  // Always the budget label; the finance gateway owns any mapping to an external id.
   // (see the same fix and its rationale in TaskAuthorizationManager.getBudgetRemaining()).
-  const reportedSpend = await runtime.ramp.getReportedSpend(budget.rampBudgetId);
+  const reportedSpend = await runtime.finance.getReportedSpend(budget.budgetId);
   return {
-    rampBudgetId: budget.rampBudgetId,
+    budgetId: budget.budgetId,
     monthlyLimit: budget.monthlyLimit,
     reportedSpend,
     availableToAuthorize: await runtime.authorizations.getBudgetRemaining(budgetName),
@@ -57,7 +57,7 @@ export function showTaskTree(runtime: ScripRuntime, authorizationId: string) {
 }
 
 export async function showReceipt(runtime: ScripRuntime, authorizationId: string) {
-  const receipt = await runtime.ramp.getReceipt(authorizationId);
+  const receipt = await runtime.finance.getReceipt(authorizationId);
   if (!receipt) throw new Error(`No settled receipt for task authorization "${authorizationId}"`);
   return receipt;
 }

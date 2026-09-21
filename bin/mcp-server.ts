@@ -8,6 +8,6 @@ if (existsSync('.env')) {
 
 const runtime = new ScripRuntime(
   process.env.SCRIP_CONFIG ?? 'scrip.yaml',
-  process.env.SCRIP_STORE ?? '.scrip/ramp.json'
+  process.env.SCRIP_STORE ?? '.scrip/ledger.json'
 );
 startMcpServer(runtime);

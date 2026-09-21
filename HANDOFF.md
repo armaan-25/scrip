@@ -12,6 +12,26 @@ person to build it. The paper at `docs/papers/DETERMINISTIC_AGENT_PAYMENTS.md`
 (+ `.tex` + `.pdf`) is the attachment. The cover memo itself is **not written**;
 the "why me" paragraph in particular is Armaan's to write.
 
+## 2026-09-21: repo cleaned, Ramp integration removed, vocabulary renamed, pushed
+
+- GitHub repo `armaan-25/scrip` flipped to PRIVATE before pushing (HANDOFF.md is
+  candid; share by invite). Local folder renamed `spending` -> `scrip`.
+- Removed: ramp-oauth, ramp-api-gateway, ramp-agent-card, ramp-x402-gateway,
+  meter, payment-executor, their tests, Ramp smoke scripts, Ramp dashboards
+  under visuals/, docs/ramp-api-notes.md. Old design docs under docs/archive/.
+- Renamed: RampGateway -> FinanceGateway (FinanceControlPlane alias kept),
+  MockRampGateway -> LocalFinanceGateway, createRampGateway -> createFinanceGateway,
+  RampBudgetConfig -> BudgetConfig, rampBudgetId -> budgetId, rampEntityId ->
+  entityId, scrip.yaml keys ramp_entity_id/ramp_budget_id -> entity_id/budget_id,
+  ramp_fund_id removed, `.scrip/ramp.json` -> `.scrip/ledger.json`, Postgres
+  column ramp_budget_id -> budget_id, MCP tool get_ramp_budget_policy ->
+  get_budget_policy, ScripRuntime.ramp -> .finance.
+- README rewritten around the purchase-protection demo. `.env.example` could
+  not be edited from the harness (env files are permission-denied); it still
+  lists RAMP_* variables and should be replaced with NATURAL_API_KEY,
+  ANTHROPIC_API_KEY, OPENAI_API_KEY, PORT.
+- Gate after cleanup: build 0, tsc 0, tests 245 passed / 8 skipped.
+
 ## 2026-09-20: purchase-protection demo built (uncommitted at time of writing)
 
 Codex-shaped brief executed: one flow, approve -> authorize -> verify -> recover,

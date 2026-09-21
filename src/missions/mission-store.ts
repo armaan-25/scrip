@@ -156,15 +156,15 @@ export class SqliteMissionStore {
     return row ? JSON.parse(row.body as string) : undefined;
   }
 
-  reportedSpend(rampBudgetId: string): number {
+  reportedSpend(budgetId: string): number {
     const month = new Date().toISOString().slice(0, 7);
     const settled = this.db.prepare('SELECT body FROM mission_task_receipts').all()
       .map(row => JSON.parse(row.body as string) as TaskReceipt)
-      .filter(receipt => receipt.rampBudgetId === rampBudgetId && receipt.settledAt.startsWith(month))
+      .filter(receipt => receipt.budgetId === budgetId && receipt.settledAt.startsWith(month))
       .reduce((total, receipt) => total + receipt.actual, 0);
     const row = this.db.prepare('SELECT body FROM lease_state WHERE id = 1').get();
     const state: PersistedLeaseState | undefined = row ? JSON.parse(row.body as string) : undefined;
-    const revoked = state?.authorizations.filter(auth => auth.rampBudgetId === rampBudgetId && auth.status === 'revoked')
+    const revoked = state?.authorizations.filter(auth => auth.budgetId === budgetId && auth.status === 'revoked')
       .reduce((total, auth) => total + auth.pending + (auth.createdAt.startsWith(month) ? auth.spent : 0), 0) ?? 0;
     return settled + revoked;
   }

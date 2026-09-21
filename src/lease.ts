@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { RampBudgetConfig, ScripConfig } from './config.js';
+import type { BudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
 import {
   computeCostBreakdown,
@@ -11,7 +11,7 @@ import {
   type AgentTrackRecordStore,
   type ModelUsage,
   type OutcomeEvidence,
-  type RampGateway,
+  type FinanceGateway,
   type TaskOutcomeStatus,
   type TaskReceipt,
 } from './store.js';
@@ -22,7 +22,7 @@ export type LeaseStatus = 'active' | 'settled' | 'revoked';
 export interface TaskAuthorization {
   authorizationId: string;
   budgetName: string;
-  rampBudgetId: string;
+  budgetId: string;
   taskId: string;
   task: string;
   allowance: number;
@@ -237,7 +237,7 @@ export class TaskAuthorizationManager {
   // already uses for settled receipts.
   constructor(
     private config: ScripConfig,
-    private ramp: RampGateway,
+    private finance: FinanceGateway,
     private storePath?: string,
     private trackRecord?: AgentTrackRecordStore,
     private stateStore?: LeaseStateStore
@@ -276,9 +276,9 @@ export class TaskAuthorizationManager {
     fs.writeFileSync(this.storePath!, JSON.stringify(data, null, 2) + '\n');
   }
 
-  private budget(name: string): RampBudgetConfig {
+  private budget(name: string): BudgetConfig {
     const budget = this.config.budgets[name];
-    if (!budget) throw new Error(`Unknown Ramp budget "${name}"`);
+    if (!budget) throw new Error(`Unknown budget "${name}"`);
     return budget;
   }
 
@@ -288,7 +288,7 @@ export class TaskAuthorizationManager {
     // gateway that needs a different identifier (a real Fund ID) resolves
     // that translation itself, since only it knows which identifier space
     // its reads and writes actually live in.
-    const reported = await this.ramp.getReportedSpend(budget.rampBudgetId);
+    const reported = await this.finance.getReportedSpend(budget.budgetId);
     const activeAllowances = [...this.authorizations.values()]
       .filter((authorization) => authorization.budgetName === name && authorization.status === 'active')
       .reduce((sum, authorization) => sum + authorization.allowance, 0);
@@ -311,7 +311,7 @@ export class TaskAuthorizationManager {
     const remaining = await this.getBudgetRemaining(params.budget);
     if (params.allowance > remaining) {
       throw new SpendLimitExceededError(
-        `Cannot authorize $${params.allowance.toFixed(4)} from Ramp budget ${budget.rampBudgetId}: ` +
+        `Cannot authorize $${params.allowance.toFixed(4)} from budget ${budget.budgetId}: ` +
           `$${remaining.toFixed(4)} remains`
       );
     }
@@ -321,7 +321,7 @@ export class TaskAuthorizationManager {
     const authorization: TaskAuthorization = {
       authorizationId: randomUUID(),
       budgetName: params.budget,
-      rampBudgetId: budget.rampBudgetId,
+      budgetId: budget.budgetId,
       taskId: params.taskId,
       task: params.task,
       allowance: params.allowance,
@@ -389,7 +389,7 @@ export class TaskAuthorizationManager {
     // Adaptive cap: an agentId with a poor settleLease() track record gets
     // clamped to a smaller slice of what it asked for, not rejected outright
     // - see minSettlementsForTrust/lowTrustResolveRateThreshold on
-    // RampBudgetConfig. Unproven agents (below minSettlementsForTrust) and
+    // BudgetConfig. Unproven agents (below minSettlementsForTrust) and
     // budgets that don't configure this at all are unaffected.
     let grantedAllowance = allowance;
     if (this.trackRecord && budget.minSettlementsForTrust !== undefined) {
@@ -503,7 +503,7 @@ export class TaskAuthorizationManager {
     const authorization = this.getActiveAuthorization(lease.authorizationId);
     const policy = this.budget(authorization.budgetName);
     if (!policy.allowedModels.includes(model)) {
-      throw new SpendLimitExceededError(`Model "${model}" is not allowed by Ramp budget ${authorization.rampBudgetId}`);
+      throw new SpendLimitExceededError(`Model "${model}" is not allowed by budget ${authorization.budgetId}`);
     }
     return this.reserveAction(credential, 'inference', model, maximumCost);
   }
@@ -532,8 +532,8 @@ export class TaskAuthorizationManager {
     const receipt: TaskReceipt = {
       receiptId: randomUUID(),
       authorizationId,
-      rampEntityId: this.config.rampEntityId,
-      rampBudgetId: authorization.rampBudgetId,
+      entityId: this.config.entityId,
+      budgetId: authorization.budgetId,
       team: this.config.team,
       taskId: authorization.taskId,
       task: authorization.task,
@@ -554,7 +554,7 @@ export class TaskAuthorizationManager {
       outcomeEvidence: outcome?.evidence,
       evidenceDetail: outcome?.evidenceDetail,
     };
-    await this.ramp.reportTaskUsage(receipt);
+    await this.finance.reportTaskUsage(receipt);
     this.persist();
     return receipt;
   }

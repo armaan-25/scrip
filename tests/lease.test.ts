@@ -8,16 +8,16 @@ import {
   SpendLimitExceededError,
   TaskAuthorizationManager,
 } from '../src/lease.js';
-import { AgentTrackRecordStore, MockRampGateway } from '../src/store.js';
+import { AgentTrackRecordStore, LocalFinanceGateway } from '../src/store.js';
 
 let tmpDir: string;
-let ramp: MockRampGateway;
+let finance: LocalFinanceGateway;
 let manager: TaskAuthorizationManager;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-lease-'));
-  ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  manager = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp);
+  finance = new LocalFinanceGateway(path.join(tmpDir, 'ledger.json'));
+  manager = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance);
 });
 
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
@@ -27,14 +27,14 @@ async function authorize(allowance = 2, ttlMs?: number) {
 }
 
 describe('TaskAuthorizationManager', () => {
-  it('mints an opaque task credential and reserves Ramp budget', async () => {
+  it('mints an opaque task credential and reserves budget', async () => {
     const issued = await authorize();
     expect(issued.credential).toMatch(/^scrip_/);
     expect(JSON.stringify(issued.authorization)).not.toContain(issued.credential);
     expect(await manager.getBudgetRemaining('research')).toBe(98);
   });
 
-  it('enforces Ramp policy on task allowance', async () => {
+  it('enforces budget policy on task allowance', async () => {
     await expect(authorize(11)).rejects.toThrow(SpendLimitExceededError);
   });
 
@@ -100,7 +100,7 @@ describe('TaskAuthorizationManager', () => {
     expect(manager.getAuthorization(root.authorization.authorizationId).status).toBe('active');
   });
 
-  it('settles one receipt for root and child usage and reports it to Ramp', async () => {
+  it('settles one receipt for root and child usage and reports it to the finance gateway', async () => {
     const root = await authorize(2);
     const child = manager.delegate(root.credential, 'researcher-1', 0.5);
     const rootRequest = manager.reserveRequest(root.credential, 'claude-sonnet-5', 0.4);
@@ -114,7 +114,7 @@ describe('TaskAuthorizationManager', () => {
     expect(receipt.childAgents).toBe(1);
     expect(receipt.requestCount).toBe(2);
     expect(receipt.modelUsage).toHaveLength(2);
-    expect(await ramp.getReportedSpend('ramp-budget-research')).toBeCloseTo(0.3);
+    expect(await finance.getReportedSpend('budget-research')).toBeCloseTo(0.3);
     expect(await manager.getBudgetRemaining('research')).toBeCloseTo(99.7);
     expect(() => manager.getLeaseForCredential(root.credential)).toThrow(InvalidCredentialError);
   });
@@ -300,7 +300,7 @@ describe('TaskAuthorizationManager', () => {
 
   it('persists authorizations and leases across separate manager instances pointed at the same store file', async () => {
     const storePath = path.join(tmpDir, 'leases.json');
-    const managerA = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const managerA = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, storePath);
     const issued = await managerA.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -309,7 +309,7 @@ describe('TaskAuthorizationManager', () => {
     });
 
     // A fresh instance, simulating a new CLI process, pointed at the same file.
-    const managerB = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const managerB = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, storePath);
     const authorization = managerB.getAuthorization(issued.authorization.authorizationId);
     expect(authorization.allowance).toBe(2);
     expect(authorization.status).toBe('active');
@@ -319,19 +319,19 @@ describe('TaskAuthorizationManager', () => {
     expect(receipt.actual).toBe(0);
 
     // A third instance sees the settlement too.
-    const managerC = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const managerC = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, storePath);
     expect(managerC.getAuthorization(issued.authorization.authorizationId).status).toBe('settled');
   });
 
   it('does not persist anything when no storePath is given, matching prior in-memory-only behavior', async () => {
-    const noStoreManager = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp);
+    const noStoreManager = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance);
     const issued = await noStoreManager.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
       task: 'Review a repository',
       allowance: 2,
     });
-    expect(fs.readdirSync(tmpDir)).toEqual(['ramp.json']);
+    expect(fs.readdirSync(tmpDir)).toEqual(['ledger.json']);
     expect(issued.authorization.status).toBe('active');
   });
 });
@@ -369,7 +369,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('records settlements to the track record store and computes resolve rate', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, undefined, trackRecord);
 
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
@@ -399,7 +399,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('does not clamp delegate() for an agentId below minSettlementsForTrust', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -420,7 +420,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('clamps delegate() below the resolve-rate threshold once minSettlementsForTrust is met', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -447,7 +447,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('does not clamp a healthy agentId at or above the resolve-rate threshold', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -468,7 +468,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('leaves delegate() unaffected for budgets that do not configure the adaptive cap', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'support', // support has no min_settlements_for_trust configured
       taskId: 'task-1',
@@ -583,7 +583,7 @@ describe('getRunReconstruction', () => {
     // A store written before ActionEvent carried leaseId. lease.spent stays
     // authoritative; only the per-node action breakdown degrades.
     const storePath = path.join(tmpDir, 'legacy-state.json');
-    const persisted = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const persisted = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, storePath);
     const root = await persisted.authorizeTask({
       budget: 'research',
       taskId: 'task-legacy',
@@ -599,7 +599,7 @@ describe('getRunReconstruction', () => {
     }
     fs.writeFileSync(storePath, JSON.stringify(raw));
 
-    const reloaded = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, storePath);
+    const reloaded = new TaskAuthorizationManager(loadConfig('scrip.yaml'), finance, storePath);
     const run = reloaded.getRunReconstruction(root.authorization.authorizationId);
     expect(run.totalSpent).toBeCloseTo(0.2);
     expect(run.unattributedCost).toBeCloseTo(0.2);

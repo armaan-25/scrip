@@ -21,17 +21,17 @@ async function main() {
     'Tools:',
     tools.map((t) => t.name)
   );
-  const expected = ['get_ramp_budget_policy', 'authorize_ai_task', 'delegate_task_allowance', 'settle_ai_task'];
+  const expected = ['get_budget_policy', 'authorize_ai_task', 'delegate_task_allowance', 'settle_ai_task'];
   for (const name of expected) {
     if (!tools.some((t) => t.name === name)) throw new Error(`Missing expected tool: ${name}`);
   }
   console.log('All 4 expected tools present.\n');
 
   const policyResult = await client.callTool({
-    name: 'get_ramp_budget_policy',
+    name: 'get_budget_policy',
     arguments: { budget: 'research' },
   });
-  console.log('get_ramp_budget_policy(research):', (policyResult.content as any)[0].text, '\n');
+  console.log('get_budget_policy(research):', (policyResult.content as any)[0].text, '\n');
 
   const authResult = await client.callTool({
     name: 'authorize_ai_task',

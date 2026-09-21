@@ -11,7 +11,7 @@ import type { ModelProvider } from '../src/providers/model-provider.js';
 import { ScripRuntime } from '../src/runtime.js';
 
 async function main() {
-  const runtime = new ScripRuntime('scrip.yaml', '.scrip/ramp.json');
+  const runtime = new ScripRuntime('scrip.yaml', '.scrip/ledger.json');
   // The 'research' budget this demo runs against has no OpenAI models in
   // allowed_models, so the openai provider is never actually invoked - a
   // real client isn't constructed unless OPENAI_API_KEY is set, keeping

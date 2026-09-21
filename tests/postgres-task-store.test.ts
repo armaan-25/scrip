@@ -50,7 +50,7 @@ describe.skipIf(!pgAvailable)('PostgresTaskStore', () => {
   async function authorize(allowance = 1) {
     return store.authorizeTask({
       budgetName: 'research',
-      rampBudgetId: 'ramp-budget-research',
+      budgetId: 'budget-research',
       taskId: 'task-1',
       task: 'Review a repository',
       allowance,

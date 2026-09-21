@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { ScripConfig } from '../config.js';
 import { TaskAuthorizationManager } from '../lease.js';
-import type { RampGateway } from '../store.js';
+import type { FinanceGateway } from '../store.js';
 import {
   AgentAuthorizationError, type AgentCredentialPresentation, type AuthenticatedAgent,
 } from './agent-identity.js';
@@ -101,7 +101,7 @@ export class PurchaseMissionService {
   }
 
   private manager(): TaskAuthorizationManager {
-    const gateway: RampGateway = {
+    const gateway: FinanceGateway = {
       getReportedSpend: async budgetId => this.store.reportedSpend(budgetId),
       reportTaskUsage: async receipt => { this.store.saveTaskReceipt(receipt); },
       getReceipt: async id => this.store.getTaskReceipt(id),

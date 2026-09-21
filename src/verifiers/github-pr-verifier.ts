@@ -34,7 +34,7 @@ interface GithubCheckRunsResponse {
  * Endpoints and field names confirmed against GitHub's current REST API
  * docs (docs.github.com/en/rest/pulls/pulls, .../rest/checks/runs), not
  * guessed. Unit-tested with a fake fetch only, same DI pattern as every
- * other real-API integration in this project (RampOAuthClient, Meter) -
+ * other real-API integration this project has had -
  * not yet live-verified against a real repository/token, since no
  * GITHUB_TOKEN is configured in this environment. See docs/OUTCOME_VERIFICATION.md.
  */

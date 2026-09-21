@@ -47,7 +47,7 @@ async function runBudget(runtime: ScripRuntime, verb: string | undefined, args: 
 
   const policy = await getBudgetPolicy(runtime, budget);
   return [
-    `rampBudgetId: ${policy.rampBudgetId}`,
+    `budgetId: ${policy.budgetId}`,
     `monthlyLimit: $${policy.monthlyLimit.toFixed(4)}`,
     `reportedSpend: $${policy.reportedSpend.toFixed(4)}`,
     `availableToAuthorize: $${policy.availableToAuthorize.toFixed(4)}`,

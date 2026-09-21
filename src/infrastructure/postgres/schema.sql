@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS task_authorizations (
   authorization_id   uuid PRIMARY KEY,
   budget_name         text NOT NULL,
-  ramp_budget_id      text NOT NULL,
+  budget_id      text NOT NULL,
   task_id             text NOT NULL,
   task                text NOT NULL,
   allowance           numeric(14, 6) NOT NULL,

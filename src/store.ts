@@ -57,8 +57,8 @@ export interface CostBreakdown {
 export interface TaskReceipt {
   receiptId: string;
   authorizationId: string;
-  rampEntityId: string;
-  rampBudgetId: string;
+  entityId: string;
+  budgetId: string;
   team: string;
   taskId: string;
   task: string;
@@ -90,8 +90,8 @@ interface StoreData {
   receipts: TaskReceipt[];
 }
 
-export interface RampGateway {
-  getReportedSpend(rampBudgetId: string, sinceMonth?: string): Promise<number>;
+export interface FinanceGateway {
+  getReportedSpend(budgetId: string, sinceMonth?: string): Promise<number>;
   reportTaskUsage(receipt: TaskReceipt): Promise<void>;
   /** The settled receipt for a task, if it's been reported through this gateway. Used by `scrip receipt show/export`. */
   getReceipt(authorizationId: string): Promise<TaskReceipt | undefined>;
@@ -99,12 +99,12 @@ export interface RampGateway {
 
 /**
  * Alias toward the pivot's proposed name for this boundary - "Scrip should
- * integrate with Ramp through adapters, not recreate Ramp." RampGateway's
+ * integrate with Ramp through adapters, not recreate Ramp." FinanceGateway's
  * two methods (read policy, report settled usage) are already exactly that
  * shape; this alias exists so new code can use the vendor-neutral name
- * without a breaking rename of every existing RampGateway implementation.
+ * without a breaking rename of every existing FinanceGateway implementation.
  */
-export type FinanceControlPlane = RampGateway;
+export type FinanceControlPlane = FinanceGateway;
 
 /** Rolls ActionUsage[] into the named CostBreakdown buckets on TaskReceipt. */
 export function computeCostBreakdown(actionUsage: ActionUsage[]): CostBreakdown {
@@ -125,7 +125,7 @@ function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
-/** Local JSON-file receipt persistence, shared by every RampGateway implementation. */
+/** Local JSON-file receipt persistence, shared by every FinanceGateway implementation. */
 export class LocalReceiptStore {
   constructor(private filePath: string) {
     if (!fs.existsSync(this.filePath)) {
@@ -147,15 +147,15 @@ export class LocalReceiptStore {
     data.receipts.push(receipt);
     this.save(data);
     console.log(
-      `[ramp] budget=${receipt.rampBudgetId} task=${receipt.taskId} ` +
+      `[scrip] budget=${receipt.budgetId} task=${receipt.taskId} ` +
         `authorized=$${receipt.authorized.toFixed(4)} actual=$${receipt.actual.toFixed(4)} ` +
         `returned=$${receipt.returned.toFixed(4)}`
     );
   }
 
-  getSpend(rampBudgetId: string, sinceMonth: string = currentMonth()): number {
+  getSpend(budgetId: string, sinceMonth: string = currentMonth()): number {
     return this.load().receipts
-      .filter((receipt) => receipt.rampBudgetId === rampBudgetId && receipt.settledAt.startsWith(sinceMonth))
+      .filter((receipt) => receipt.budgetId === budgetId && receipt.settledAt.startsWith(sinceMonth))
       .reduce((sum, receipt) => sum + receipt.actual, 0);
   }
 
@@ -193,8 +193,7 @@ export interface ResolveRate {
  * one outcome per root task, not per delegated agent - see settleLease() in
  * lease.ts for where these entries come from). Same local JSON-file pattern
  * as LocalReceiptStore, and deliberately a separate file: receipts are
- * Ramp-reported financial records, this is Scrip's own trust signal and has
- * no Ramp analog.
+ * externally reported financial records, this is Scrip's own trust signal.
  */
 export class AgentTrackRecordStore {
   constructor(private filePath: string) {
@@ -231,8 +230,8 @@ export class AgentTrackRecordStore {
   }
 }
 
-/** Local Ramp boundary used by the demo. Replace this adapter, not the lease engine. */
-export class MockRampGateway implements RampGateway {
+/** Local JSON-file finance boundary. Replace this adapter, not the lease engine. */
+export class LocalFinanceGateway implements FinanceGateway {
   private readonly store: LocalReceiptStore;
 
   constructor(filePath: string) {
@@ -243,8 +242,8 @@ export class MockRampGateway implements RampGateway {
     this.store.addReceipt(receipt);
   }
 
-  async getReportedSpend(rampBudgetId: string, sinceMonth?: string): Promise<number> {
-    return this.store.getSpend(rampBudgetId, sinceMonth);
+  async getReportedSpend(budgetId: string, sinceMonth?: string): Promise<number> {
+    return this.store.getSpend(budgetId, sinceMonth);
   }
 
   async getReceipt(authorizationId: string): Promise<TaskReceipt | undefined> {

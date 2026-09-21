@@ -7,7 +7,7 @@ import chalk from 'chalk';
 import { runCli, UsageError } from '../src/cli.js';
 import { ScripRuntime } from '../src/runtime.js';
 
-// Ramp's real brand accent, confirmed via brandcolorcode.com and Ramp's own
+// Accent color for field labels (originally Ramp's brand yellow; kept for the CLI's look), per
 // design system docs ("a single highlighter-yellow signal against
 // monochrome") - one yellow accent, everything else neutral, no other hues.
 // See docs/superpowers/specs/2026-07-22-cli-styling-design.md.
@@ -32,7 +32,7 @@ async function main() {
   console.log(accent.bold('▲ SCRIP'));
   const runtime = new ScripRuntime(
     process.env.SCRIP_CONFIG ?? 'scrip.yaml',
-    process.env.SCRIP_STORE ?? '.scrip/ramp.json',
+    process.env.SCRIP_STORE ?? '.scrip/ledger.json',
     undefined,
     // Every other ScripRuntime caller (MCP server, demo scripts) is one
     // long-running process end to end, so it never needed this. Each CLI

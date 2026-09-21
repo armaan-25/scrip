@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalRequiredError, SpendLimitExceededError } from '../src/lease.js';
 import { ScripClient } from '../src/proxy.js';
 import { ScripRuntime } from '../src/runtime.js';
-import { MockRampGateway } from '../src/store.js';
+import { LocalFinanceGateway } from '../src/store.js';
 
 function fakeProvider(usage = { input_tokens: 500, output_tokens: 300 }) {
   return {
@@ -41,12 +41,12 @@ function anthropicOnly(provider: ReturnType<typeof fakeProvider> | ReturnType<ty
 
 let tmpDir: string;
 let runtime: ScripRuntime;
-let ramp: MockRampGateway;
+let finance: LocalFinanceGateway;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-proxy-'));
-  ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
+  finance = new LocalFinanceGateway(path.join(tmpDir, 'ledger.json'));
+  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), finance);
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -215,7 +215,7 @@ describe('ScripClient', () => {
     const noControllerYaml = path.join(tmpDir, 'no-controller.yaml');
     const original = fs.readFileSync('scrip.yaml', 'utf-8');
     fs.writeFileSync(noControllerYaml, original.replace(/\n\s*controller_model:.*\n/, '\n'));
-    const noControllerRuntime = new ScripRuntime(noControllerYaml, path.join(tmpDir, 'unused2.json'), ramp);
+    const noControllerRuntime = new ScripRuntime(noControllerYaml, path.join(tmpDir, 'unused2.json'), finance);
 
     const root = await noControllerRuntime.authorizations.authorizeTask({
       budget: 'escalation',

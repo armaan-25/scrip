@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { startHttpServer } from '../src/interfaces/http/server.js';
 import { ScripRuntime } from '../src/runtime.js';
-import { MockRampGateway } from '../src/store.js';
+import { LocalFinanceGateway } from '../src/store.js';
 
 let tmpDir: string;
 let runtime: ScripRuntime;
@@ -14,8 +14,8 @@ let baseUrl: string;
 
 beforeAll(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-http-'));
-  const ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
+  const finance = new LocalFinanceGateway(path.join(tmpDir, 'ledger.json'));
+  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), finance);
   server = startHttpServer(runtime, 0); // port 0 - the OS picks a free ephemeral port
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const address = server.address();

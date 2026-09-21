@@ -1,7 +1,7 @@
 import { authorizeTask, settleTask } from '../src/handlers.js';
 import { ScripClient } from '../src/proxy.js';
 import { ScripRuntime } from '../src/runtime.js';
-import { MockRampGateway } from '../src/store.js';
+import { LocalFinanceGateway } from '../src/store.js';
 import { GithubPrOutcomeVerifier, type HttpFetch } from '../src/verifiers/github-pr-verifier.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -61,8 +61,8 @@ function fakeGithubFetch(): HttpFetch {
 
 async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-flagship-'));
-  const ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
+  const finance = new LocalFinanceGateway(path.join(tmpDir, 'ledger.json'));
+  const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), finance);
   const anthropicProvider = fakeProvider('anthropic', 400, 250);
   const openaiProvider = fakeProvider('openai', 400, 250);
   const client = new ScripClient(runtime, { anthropic: anthropicProvider, openai: openaiProvider });

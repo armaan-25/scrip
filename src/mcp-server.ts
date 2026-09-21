@@ -9,8 +9,8 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
   const server = new McpServer({ name: 'scrip', version: '0.2.0' });
 
   server.tool(
-    'get_ramp_budget_policy',
-    'Read the Ramp-backed policy available for task authorization.',
+    'get_budget_policy',
+    'Read the budget policy available for task authorization.',
     { budget: z.string() },
     async ({ budget }) => ({
       content: [{ type: 'text', text: JSON.stringify(await getBudgetPolicy(runtime, budget)) }],
@@ -19,7 +19,7 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
 
   server.tool(
     'authorize_ai_task',
-    'Mint one temporary inference credential backed by a Ramp budget.',
+    'Mint one temporary inference credential backed by a budget.',
     { budget: z.string(), taskId: z.string(), task: z.string(), allowance: z.number().positive() },
     async (params) => ({
       content: [{ type: 'text', text: JSON.stringify(await authorizeTask(runtime, params)) }],
@@ -37,7 +37,7 @@ export function createMcpServer(runtime: ScripRuntime): McpServer {
 
   server.tool(
     'settle_ai_task',
-    'Close a task authorization, emit its receipt, and report usage to Ramp.',
+    'Close a task authorization, emit its receipt, and report usage to the finance gateway.',
     {
       authorizationId: z.string(),
       outcomeStatus: z.enum(['success', 'failure', 'unknown']).optional(),

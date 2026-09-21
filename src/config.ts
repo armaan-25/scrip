@@ -4,9 +4,8 @@ import { getModelPrice } from './pricing.js';
 
 export type LimitBehavior = 'degrade' | 'request-approval' | 'deny';
 
-export interface RampBudgetConfig {
-  rampBudgetId: string;
-  rampFundId?: string;
+export interface BudgetConfig {
+  budgetId: string;
   monthlyLimit: number;
   maxTaskAllowance: number;
   allowedModels: string[];
@@ -37,15 +36,15 @@ export interface RampBudgetConfig {
 
 export interface ScripConfig {
   team: string;
-  rampEntityId: string;
-  budgets: Record<string, RampBudgetConfig>;
+  entityId: string;
+  budgets: Record<string, BudgetConfig>;
 }
 
 /**
  * The pivot's resource envelope. `scrip.yaml` has no independent fields for
  * these yet (no max_tokens/max_requests/max_concurrency/max_subagents/
  * max_wall_clock_seconds key exists in the schema below) - deriveResourceLimits()
- * is a *view* over the RampBudgetConfig fields that already carry this
+ * is a *view* over the BudgetConfig fields that already carry this
  * meaning, not a new stored config, so it's always correct and never
  * silently stale. Fields with no current equivalent are honestly undefined
  * rather than a fabricated default.
@@ -62,7 +61,7 @@ export interface ResourceLimits {
 
 /**
  * The pivot's capability envelope, same derivation approach as
- * ResourceLimits: a view over existing RampBudgetConfig fields, not new
+ * ResourceLimits: a view over existing BudgetConfig fields, not new
  * config. `allowedProviders` is derived from `allowedModels` via
  * getModelPrice().provider (see deriveCapabilityPolicy in this file);
  * `allowedTools`/`allowedActionTypes` have no config source yet - Scrip has
@@ -77,14 +76,14 @@ export interface CapabilityPolicy {
   requiresApprovalAboveUsd?: number;
 }
 
-export function deriveResourceLimits(budget: RampBudgetConfig): ResourceLimits {
+export function deriveResourceLimits(budget: BudgetConfig): ResourceLimits {
   return {
     maxUsd: budget.maxTaskAllowance,
     maxDelegationDepth: budget.maxDelegationDepth,
   };
 }
 
-export function deriveCapabilityPolicy(budget: RampBudgetConfig): CapabilityPolicy {
+export function deriveCapabilityPolicy(budget: BudgetConfig): CapabilityPolicy {
   const allowedProviders = [...new Set(budget.allowedModels.map((model) => getModelPrice(model).provider))];
   return {
     allowedModels: budget.allowedModels,
@@ -94,8 +93,7 @@ export function deriveCapabilityPolicy(budget: RampBudgetConfig): CapabilityPoli
 }
 
 interface RawBudget {
-  ramp_budget_id: string;
-  ramp_fund_id?: string;
+  budget_id: string;
   monthly_limit: number;
   max_task_allowance: number;
   allowed_models: string[];
@@ -113,17 +111,17 @@ interface RawBudget {
 
 interface RawConfig {
   team: string;
-  ramp_entity_id: string;
+  entity_id: string;
   budgets: Record<string, RawBudget>;
 }
 
 export function loadConfig(filePath: string): ScripConfig {
   const raw = yaml.load(fs.readFileSync(filePath, 'utf-8')) as RawConfig;
-  if (!raw?.team || !raw.ramp_entity_id || !raw.budgets) {
-    throw new Error('Config must define team, ramp_entity_id, and budgets');
+  if (!raw?.team || !raw.entity_id || !raw.budgets) {
+    throw new Error('Config must define team, entity_id, and budgets');
   }
 
-  const budgets: Record<string, RampBudgetConfig> = {};
+  const budgets: Record<string, BudgetConfig> = {};
   for (const [name, budget] of Object.entries(raw.budgets)) {
     if (budget.monthly_limit <= 0 || budget.max_task_allowance <= 0) {
       throw new Error(`Budget "${name}" limits must be positive`);
@@ -138,8 +136,7 @@ export function loadConfig(filePath: string): ScripConfig {
       throw new Error(`Budget "${name}" max_delegation_depth must be positive`);
     }
     budgets[name] = {
-      rampBudgetId: budget.ramp_budget_id,
-      rampFundId: budget.ramp_fund_id,
+      budgetId: budget.budget_id,
       monthlyLimit: budget.monthly_limit,
       maxTaskAllowance: budget.max_task_allowance,
       allowedModels: budget.allowed_models,
@@ -156,5 +153,5 @@ export function loadConfig(filePath: string): ScripConfig {
     };
   }
 
-  return { team: raw.team, rampEntityId: raw.ramp_entity_id, budgets };
+  return { team: raw.team, entityId: raw.entity_id, budgets };
 }

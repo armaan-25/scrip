@@ -91,7 +91,7 @@ File ownership:
   claims, and the transactional adapter for existing lease state.
 - `src/missions/purchase-mission-service.ts`: `PurchaseMissionService`
   coordinates approval, reservations, provider calls, evidence, recovery,
-  cancellation, and receipts. It uses a local-only `RampGateway` for budget
+  cancellation, and receipts. It uses a local-only `FinanceGateway` for budget
   accounting and task receipts; no environment-selected live adapters.
 - `src/lease.ts`: optional `LeaseStateStore` injection, preserving the
   existing reservation math and JSON/in-memory defaults. The optional
@@ -334,7 +334,7 @@ for the MCP surface.
   change. `scripts/demo-flagship.ts` exercises `paid_api` directly.
 - **Domain vocabulary aliases** — `TaskExecution`/`ExecutionLease`/
   `EconomicAction`/`FinanceControlPlane` are exported type aliases over
-  `TaskAuthorization`/`InferenceLease`/`ActionReservation`/`RampGateway`,
+  `TaskAuthorization`/`InferenceLease`/`ActionReservation`/`FinanceGateway`,
   toward the pivot's newer nouns. Field names (`allowance`/`spent`/
   `pending`) are unchanged so far — a full field-level rename
   (`allowance`→`authorizedUsd` etc.) is real, mechanical, whole-repo-touching
@@ -430,11 +430,11 @@ circular.
 
 ### Finance boundary
 
-`src/store.ts` defines `RampGateway` (aliased `FinanceControlPlane`): the
+`src/store.ts` defines `FinanceGateway` (aliased `FinanceControlPlane`): the
 two calls the ledger makes outward, `getReportedSpend(budgetId)` to learn
 what a budget has already spent this month, and `reportTaskUsage(receipt)`
-to record a settled receipt. `MockRampGateway` is the only implementation:
-a local JSON-file receipt store. `src/runtime.ts`'s `createRampGateway()`
+to record a settled receipt. `LocalFinanceGateway` is the only implementation:
+a local JSON-file receipt store. `src/runtime.ts`'s `createFinanceGateway()`
 returns it. The Ramp API integration that used to sit here (OAuth, Fund
 reads, usage broadcast, card issuance, x402) was removed on 2026-09-21; the
 design notes for it are under `docs/archive/`.
@@ -477,7 +477,7 @@ logic:
   `TaskAuthorizationManager`/`ScripRuntime`.
 - **`src/mcp-server.ts`** / **`bin/mcp-server.ts`** — wraps 4 of those 5
   handlers (`revokeTask` isn't exposed here) as MCP tools
-  (`get_ramp_budget_policy`, `authorize_ai_task`, `delegate_task_allowance`,
+  (`get_budget_policy`, `authorize_ai_task`, `delegate_task_allowance`,
   `settle_ai_task`) for an MCP-capable agent harness (Claude Code, Codex)
   to call directly. **Important:** the gated inference call itself
   (`ScripClient.run`) is not an MCP tool — an MCP agent can get a
@@ -494,7 +494,7 @@ logic:
   since each invocation is a separate process. `task show`/`task tree`
   read `TaskAuthorizationManager.getAuthorization()`/`getLeaseTree()`
   directly; `receipt show`/`receipt export` read back through
-  `RampGateway.getReceipt()` (the local write, even against
+  `FinanceGateway.getReceipt()` (the local write, even against
   `RampApiGateway` — Ramp's AI Usage Tracking is a one-way broadcast, not
   a queryable store).
 - **`src/interfaces/http/server.ts`** / **`bin/http-server.ts`** — a
@@ -511,7 +511,7 @@ logic:
 
 `src/runtime.ts`'s `ScripRuntime` is the composition root all four
 surfaces build on: loads `scrip.yaml` via `src/config.ts`, picks a
-`RampGateway`, constructs `TaskAuthorizationManager`, owns a
+`FinanceGateway`, constructs `TaskAuthorizationManager`, owns a
 `BudgetRouter`.
 
 ### Durable, concurrency-safe persistence
@@ -560,7 +560,7 @@ Caller selects budget + task allowance
 → actual tokens replace the pending reservation
 → settleTask closes every lease and aggregates one receipt
   (modelUsage broken down per model, actionUsage per action type)
-→ RampGateway reports task usage: local receipt first (source of truth),
+→ FinanceGateway reports task usage: local receipt first (source of truth),
   then best-effort broadcast to Ramp's AI Usage Tracking
 ```
 

@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { deriveCapabilityPolicy, deriveResourceLimits, loadConfig } from '../src/config.js';
 
 describe('loadConfig', () => {
-  it('loads Ramp budgets and task credential policy', () => {
+  it('loads budgets and task credential policy', () => {
     const config = loadConfig('scrip.yaml');
     expect(config.team).toBe('agent-platform');
-    expect(config.rampEntityId).toBe('ramp-entity-demo');
+    expect(config.entityId).toBe('scrip-demo');
     expect(config.budgets.research).toEqual({
-      rampBudgetId: 'ramp-budget-research',
-      rampFundId: '695e46a0-8193-4d67-91e3-1c8eb43ec9d9',
+      budgetId: 'budget-research',
       monthlyLimit: 100,
       maxTaskAllowance: 10,
       allowedModels: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
@@ -30,10 +29,6 @@ describe('loadConfig', () => {
     expect(config.budgets.support.lowTrustResolveRateThreshold).toBeUndefined();
   });
 
-  it('leaves rampFundId undefined when not configured', () => {
-    const config = loadConfig('scrip.yaml');
-    expect(config.budgets.support.rampFundId).toBeUndefined();
-  });
 
   it('loads controllerModel for the request-approval budget', () => {
     const config = loadConfig('scrip.yaml');

@@ -23,30 +23,30 @@ let runtime: ScripRuntime;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-handlers-'));
-  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ramp.json'));
+  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ledger.json'));
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
 describe('task credential handlers', () => {
-  it('exposes Ramp policy and available task authorization', async () => {
+  it('exposes budget policy and available task authorization', async () => {
     expect(await getBudgetPolicy(runtime, 'research')).toMatchObject({
-      rampBudgetId: 'ramp-budget-research',
+      budgetId: 'budget-research',
       monthlyLimit: 100,
       availableToAuthorize: 100,
       maxTaskAllowance: 10,
     });
   });
 
-  it('reads spend using rampBudgetId, never a resolved Fund ID - regression for a real bug caught via the MCP smoke test', async () => {
-    // MockRampGateway's getReportedSpend doesn't care what ID it's given
+  it('reads spend using budgetId, never a resolved Fund ID - regression for a real bug caught via the MCP smoke test', async () => {
+    // LocalFinanceGateway's getReportedSpend doesn't care what ID it's given
     // (an empty store returns 0 either way), which is exactly why this bug
-    // was invisible to it: handlers.ts once resolved budget.rampFundId
+    // was invisible to it: handlers.ts once resolved a fund id
     // before calling getReportedSpend(), double-resolving an ID that
-    // RampApiGateway already resolves itself. A spy on the real gateway
+    // the finance gateway already resolves itself. A spy on the real gateway
     // instance is what actually catches the wrong argument.
-    const spy = vi.spyOn(runtime.ramp, 'getReportedSpend');
+    const spy = vi.spyOn(runtime.finance, 'getReportedSpend');
     await getBudgetPolicy(runtime, 'research');
-    expect(spy).toHaveBeenCalledWith('ramp-budget-research');
+    expect(spy).toHaveBeenCalledWith('budget-research');
   });
 
   it('authorizes, delegates, and settles a task', async () => {

@@ -4,15 +4,15 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runCli, UsageError } from '../src/cli.js';
 import { ScripRuntime } from '../src/runtime.js';
-import { MockRampGateway } from '../src/store.js';
+import { LocalFinanceGateway } from '../src/store.js';
 
 let tmpDir: string;
 let runtime: ScripRuntime;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-cli-'));
-  const ramp = new MockRampGateway(path.join(tmpDir, 'ramp.json'));
-  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), ramp);
+  const finance = new LocalFinanceGateway(path.join(tmpDir, 'ledger.json'));
+  runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'unused.json'), finance);
 });
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -44,7 +44,7 @@ describe('runCli top-level dispatch', () => {
 describe('runCli budget status', () => {
   it('prints budget policy fields for a known budget', async () => {
     const output = await runCli(runtime, ['budget', 'status', 'research']);
-    expect(output).toContain('rampBudgetId: ramp-budget-research');
+    expect(output).toContain('budgetId: budget-research');
     expect(output).toContain('monthlyLimit: $100.0000');
     expect(output).toContain('allowedModels: claude-sonnet-5, claude-haiku-4-5-20251001');
     expect(output).toContain('onLimit: deny');

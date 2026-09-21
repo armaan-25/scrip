@@ -12,7 +12,7 @@ export class InvalidCredentialError extends Error {}
 export interface PgTaskAuthorization {
   authorizationId: string;
   budgetName: string;
-  rampBudgetId: string;
+  budgetId: string;
   taskId: string;
   task: string;
   allowance: number;
@@ -94,7 +94,7 @@ export class PostgresTaskStore {
 
   async authorizeTask(params: {
     budgetName: string;
-    rampBudgetId: string;
+    budgetId: string;
     taskId: string;
     task: string;
     allowance: number;
@@ -110,10 +110,10 @@ export class PostgresTaskStore {
 
       const authRow = await client.query(
         `INSERT INTO task_authorizations
-           (authorization_id, budget_name, ramp_budget_id, task_id, task, allowance, expires_at)
+           (authorization_id, budget_name, budget_id, task_id, task, allowance, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [authorizationId, params.budgetName, params.rampBudgetId, params.taskId, params.task, params.allowance, expiresAt]
+        [authorizationId, params.budgetName, params.budgetId, params.taskId, params.task, params.allowance, expiresAt]
       );
       const leaseRow = await client.query(
         `INSERT INTO leases
