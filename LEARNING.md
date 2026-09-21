@@ -124,23 +124,21 @@ plausible guess.
 
 ## Package responsibilities
 
-- `@anthropic-ai/sdk` and `openai` each perform their own provider's
-  request and return token usage; `ModelProvider` is the interface that
-  keeps `ScripClient`/`ApprovalController` from importing either directly.
-- `js-yaml` loads the human-readable budget definitions in `scrip.yaml`.
-- `@modelcontextprotocol/sdk` and `zod` power the optional MCP adapter and
-  its input validation. Neither owns policy or persistence.
-- Vitest exercises the lifecycle without making billed API calls; where a
-  scenario needs to be seen rather than just asserted on,
-  `scripts/demo-flagship.ts` reproduces it against the real enforcement
-  code with fake provider/GitHub clients — deterministic, free, and honest
-  about which parts are real (every reservation/commit/release call) versus
-  stubbed (model and GitHub responses).
-
-No new package was added for the execution-economics pivot's first slice
-(`OutcomeVerifier`/`GithubPrOutcomeVerifier` use the built-in `fetch`, same
-DI pattern as the removed Ramp OAuth client); Node's standard `crypto` module remains
-sufficient for opaque credential generation and hashing.
+- `js-yaml` loads the budget definitions in `scrip.yaml`.
+- `zod` validates contracts, payment facts, and booking evidence at the
+  mission slice's boundary (`outcome-assessor.ts` schemas) so nothing
+  malformed reaches the ledger.
+- `@naturalpay/sdk` is Natural's official TypeScript client, used only by
+  `src/rails/natural-settlement.ts` and the two read-only scripts. It reads
+  `NATURAL_API_KEY` from the environment and replaces hand-rolled fetch
+  calls against endpoints the public docs do not list.
+- `chalk` colors demo output. `node:sqlite` and `node:crypto` are built in:
+  the mission store, the agent registry, digests, HMACs, and credential
+  hashing need no package.
+- Vitest runs everything offline. Where a scenario should be seen rather
+  than only asserted, `demo/protect.ts` reproduces it against the real
+  mission service with simulated providers, and `tests/demo-protect.test.ts`
+  runs that same demo silently and asserts its outcomes.
 
 
 ## Agent identity vs. contract versioning (September 16, 2026)

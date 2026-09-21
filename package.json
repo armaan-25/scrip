@@ -1,37 +1,25 @@
 {
   "name": "scrip",
   "version": "0.2.0",
-  "description": "Scrip authorizes, meters, and settles autonomous work: a task execution contract that reserves spend before it happens, delegates bounded authority to concurrent workers, and settles against a verified outcome.",
+  "description": "Scrip connects what a person authorizes an agent to buy with what the agent actually pays for and what was delivered.",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && mkdir -p dist/src/infrastructure/postgres dist/src/pricing && cp src/infrastructure/postgres/schema.sql dist/src/infrastructure/postgres/schema.sql && cp src/pricing/model_price.json dist/src/pricing/model_price.json",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/src/pricing && cp src/pricing/model_price.json dist/src/pricing/model_price.json",
     "test": "vitest run",
-    "mcp-server": "tsx bin/mcp-server.ts",
-    "cli": "tsx bin/cli.ts",
-    "demo": "tsx demo/run-demo.ts",
-    "demo:flagship": "tsx scripts/demo-flagship.ts",
-    "http-server": "tsx bin/http-server.ts",
     "demo:deterministic": "tsx demo/deterministic-authorization.ts",
     "demo:protect": "tsx demo/protect.ts",
     "visuals:protect": "tsx visuals/protect-server.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
-    "@modelcontextprotocol/sdk": "^1.7.0",
     "@naturalpay/sdk": "^1.6.16",
     "chalk": "^5.6.2",
-    "express": "^5.2.1",
     "js-yaml": "^4.1.0",
-    "openai": "^6.48.0",
-    "pg": "^8.22.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.9.0",
-    "@types/pg": "^8.20.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

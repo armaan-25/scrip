@@ -10,5 +10,11 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "bin", "demo", "tests"]
+  "include": [
+    "src",
+    "demo",
+    "tests",
+    "visuals",
+    "scripts"
+  ]
 }

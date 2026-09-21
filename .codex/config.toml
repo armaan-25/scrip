@@ -1,3 +1,0 @@
-[mcp_servers.scrip]
-command = "npx"
-args = ["tsx", "bin/mcp-server.ts"]

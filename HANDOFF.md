@@ -12,6 +12,18 @@ person to build it. The paper at `docs/papers/DETERMINISTIC_AGENT_PAYMENTS.md`
 (+ `.tex` + `.pdf`) is the attachment. The cover memo itself is **not written**;
 the "why me" paragraph in particular is Armaan's to write.
 
+## 2026-09-21 (later): ledger surfaces removed too
+
+Kept the ledger core (`src/lease.ts`, `src/store.ts`, `src/config.ts`,
+`src/pricing.ts`) because its delegation model (attenuated leases, cascading
+revocation, exact per-worker attribution) has no counterpart at Natural and
+answers the agent-to-agent question if it comes up. Deleted everything built
+around it: CLI, HTTP API, MCP server, inference proxy and providers, approval
+controller, GitHub verifier, Postgres store, Docker, `.mcp.json`, and their
+tests. Dependencies dropped: @anthropic-ai/sdk, @modelcontextprotocol/sdk,
+express, openai, pg. Repo is now: missions, cards, protect, rails, the ledger,
+two demos, one page, two Natural scripts, the paper.
+
 ## 2026-09-21: repo cleaned, Ramp integration removed, vocabulary renamed, pushed
 
 - GitHub repo `armaan-25/scrip` flipped to PRIVATE before pushing (HANDOFF.md is

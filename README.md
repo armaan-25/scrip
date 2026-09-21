@@ -71,9 +71,8 @@ a run starts by sweeping the previous run's balance back. Verified 2026-09-20.
 | `src/cards/` | The card slice: an issuer-side gate in two tiers (authorization: merchant, amount, currency, window, single use; order: signed merchant order must match the approved fingerprint), a simulated issuer, two simulated merchants. The gate imports nothing from the mission service, registry, or store, and a test enforces that. |
 | `src/protect/` | The recovery case: builds the evidence packet and asks the merchant for a refund only where the approved policy allows. |
 | `src/rails/` | The live Natural settlement wrapper. |
-| `src/lease.ts`, `src/store.ts` | The task ledger underneath: atomic reserve/commit/cancel accounting for one authorized job and its delegated workers. Predates the purchase work; the mission slice uses it to reserve and settle exposure. |
-| `bin/`, `src/cli.ts`, `src/handlers.ts`, `src/interfaces/http/` | CLI, HTTP API, and MCP server over the task ledger. |
-| `demo/` | `protect.ts` (the demo above) and `deterministic-authorization.ts` (an earlier three-phase version: propose, ratify, enforce). |
+| `src/lease.ts`, `src/store.ts`, `src/config.ts` | The task ledger underneath: atomic reserve/commit/cancel accounting for one authorized job and its delegated workers, with attenuated delegation and cascading revocation. Predates the purchase work; the mission slice uses it to reserve and settle exposure. |
+| `demo/` | `protect.ts` (the demo above) and `deterministic-authorization.ts` (an earlier three-phase version: propose, ratify, enforce, no card). |
 | `docs/papers/` | The working paper, with the incident survey, benchmark evidence, related work, and a read-only inspection of Natural's API. |
 | `SPEC.md`, `ARCHITECTURE.md`, `LEARNING.md` | Product contract, runtime boundaries and file ownership, concepts and lessons. |
 
@@ -100,9 +99,10 @@ npm run demo:protect
 
 ## History
 
-Scrip began as a spend-authorization layer for autonomous work on Ramp's
-budgets: task allowances, delegated worker leases, atomic reservations across
-concurrent subagents, usage broadcast. That code was the ledger this repo still
-runs on; the Ramp integration itself (OAuth, Fund reads, usage broadcast, card
-issuance, x402) was removed on 2026-09-21. Design notes from that period are
-under `docs/archive/`.
+Scrip began as a spend-authorization layer for autonomous work: task
+allowances, delegated worker leases, atomic reservations across concurrent
+subagents, gated inference, and a Ramp integration for policy and usage
+reporting. The ledger from that period is what this repo still settles
+through. The Ramp integration, the inference proxy, and the CLI, HTTP, MCP,
+Postgres, and Docker surfaces around the ledger were removed on 2026-09-21;
+design notes are under `docs/archive/` and the code is in git history.
