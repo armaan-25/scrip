@@ -112,11 +112,11 @@ merchant reliability, live refunds, deployed authentication, or provider terms.
 
 ## Verifying claims against primary sources, not memory
 
-Every architectural claim this project makes about Ramp's product surface
+Every architectural claim this project makes about a vendor's product surface
 (Funds, AI Usage Tracking, Agent Cards, AI cost monitoring) was checked by
-reading Ramp's own current docs directly, not recalled from training data —
-API surfaces and product positioning change, and "I believe Ramp does X" is
-a materially weaker claim than "Ramp's docs, fetched just now, say X." Where
+reading the vendor's own current docs directly, not recalled from training data —
+API surfaces and product positioning change, and "I believe the vendor does X" is
+a materially weaker claim than "their docs, fetched just now, say X." Where
 something couldn't be verified (exact response field names for the Funds
 balance endpoint, the sandbox request form's fields before actually seeing
 it), that was stated as an open question rather than filled in with a
@@ -127,7 +127,7 @@ plausible guess.
 - `@anthropic-ai/sdk` and `openai` each perform their own provider's
   request and return token usage; `ModelProvider` is the interface that
   keeps `ScripClient`/`ApprovalController` from importing either directly.
-- `js-yaml` loads human-readable Ramp budget mappings from `scrip.yaml`.
+- `js-yaml` loads the human-readable budget definitions in `scrip.yaml`.
 - `@modelcontextprotocol/sdk` and `zod` power the optional MCP adapter and
   its input validation. Neither owns policy or persistence.
 - Vitest exercises the lifecycle without making billed API calls; where a
@@ -139,7 +139,7 @@ plausible guess.
 
 No new package was added for the execution-economics pivot's first slice
 (`OutcomeVerifier`/`GithubPrOutcomeVerifier` use the built-in `fetch`, same
-DI pattern as `RampOAuthClient`); Node's standard `crypto` module remains
+DI pattern as the removed Ramp OAuth client); Node's standard `crypto` module remains
 sufficient for opaque credential generation and hashing.
 
 

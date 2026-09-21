@@ -51,7 +51,7 @@ describe('runCli budget status', () => {
   });
 
   it('throws for an unknown budget', async () => {
-    await expect(runCli(runtime, ['budget', 'status', 'not-a-real-budget'])).rejects.toThrow(/Unknown Ramp budget/);
+    await expect(runCli(runtime, ['budget', 'status', 'not-a-real-budget'])).rejects.toThrow(/Unknown budget/);
   });
 
   it('throws a UsageError when the budget argument is missing', async () => {

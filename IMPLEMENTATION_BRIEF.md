@@ -25,7 +25,7 @@ The reference mission is a refundable hotel booking. This gives the first slice 
 1. Read `SPEC.md` completely. It is the source of truth for the consumer product, domain language, lifecycle, safety rules, and acceptance criteria.
 2. Read `HANDOFF.md` for the current implementation and provider boundaries. Where its older product positioning conflicts with `SPEC.md`, follow `SPEC.md`.
 3. Inspect `git status`, the current diff, and `.claude/checks.sh` if present. Preserve every unrelated or pre-existing modification.
-4. Inspect the existing symbols before designing replacements, especially `TaskAuthorizationManager`, `reserveAction`, `commitAction`, `cancelAction`, revocation, receipts, `RampGateway`, `CardIssuer`, and `PaymentExecutor`.
+4. Inspect the existing symbols before designing replacements, especially `TaskAuthorizationManager`, `reserveAction`, `commitAction`, `cancelAction`, revocation, receipts, and `RampGateway` (the finance boundary; `CardIssuer` and `PaymentExecutor` were removed with the Ramp integration on 2026-09-21).
 
 Completion criterion: before editing, be able to name the existing symbol reused for reservation and the new module that will own the mission aggregate.
 

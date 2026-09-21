@@ -1,4 +1,5 @@
-import type { HttpFetch } from '../ramp-oauth.js';
+/** Injected fetch so tests and demos can supply a fake without network access. */
+export type HttpFetch = typeof fetch;
 import type { OutcomeEvidence } from '../store.js';
 import type { OutcomeVerifier } from '../outcome-verifier.js';
 

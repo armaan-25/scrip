@@ -69,15 +69,6 @@ export function reserveAction(
   return runtime.authorizations.reserveAction(params.credential, params.actionType, params.label, params.maximumCost);
 }
 
-export function reserveCardPurchase(
-  runtime: ScripRuntime,
-  params: { credential: string; label: string; maximumCost: number; merchant: string }
-) {
-  return runtime.authorizations.reserveCardPurchase(params.credential, params.label, params.maximumCost, {
-    merchant: params.merchant,
-  });
-}
-
 export function commitAction(runtime: ScripRuntime, reservationId: string, actualCost: number): void {
   runtime.authorizations.commitAction(reservationId, actualCost);
 }

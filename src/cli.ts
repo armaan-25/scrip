@@ -6,7 +6,6 @@ import {
   delegateTaskAllowance,
   getBudgetPolicy,
   reserveAction,
-  reserveCardPurchase,
   revokeTask,
   sweepExpired,
   settleTask,
@@ -210,14 +209,12 @@ async function runAction(runtime: ScripRuntime, verb: string | undefined, args: 
   switch (verb) {
     case 'reserve':
       return runActionReserve(runtime, args);
-    case 'reserve-card':
-      return runActionReserveCard(runtime, args);
     case 'commit':
       return runActionCommit(runtime, args);
     case 'cancel':
       return runActionCancel(runtime, args);
     default:
-      throw new UsageError('Usage: scrip action <reserve|reserve-card|commit|cancel> ...');
+      throw new UsageError('Usage: scrip action <reserve|commit|cancel> ...');
   }
 }
 
@@ -241,26 +238,6 @@ function runActionReserve(runtime: ScripRuntime, args: string[]): string {
     `label: ${reservation.label}`,
     `maximumCost: $${reservation.maximumCost.toFixed(4)}`,
     `status: ${reservation.status}`,
-  ].join('\n');
-}
-
-async function runActionReserveCard(runtime: ScripRuntime, args: string[]): Promise<string> {
-  const [credential, label, maximumCostArg, merchant] = args;
-  if (!credential || !label || !maximumCostArg || !merchant) {
-    throw new UsageError('Usage: scrip action reserve-card <credential> <label> <maximumCost> <merchant>');
-  }
-  const maximumCost = Number(maximumCostArg);
-  if (Number.isNaN(maximumCost)) {
-    throw new UsageError(`maximumCost must be a number, got "${maximumCostArg}"`);
-  }
-
-  const reservation = await reserveCardPurchase(runtime, { credential, label, maximumCost, merchant });
-  return [
-    `reservationId: ${reservation.reservationId}`,
-    `label: ${reservation.label}`,
-    `maximumCost: $${reservation.maximumCost.toFixed(4)}`,
-    `status: ${reservation.status}`,
-    `card: ${reservation.card.cardId} (•••• ${reservation.card.last4}, ${reservation.card.state})`,
   ].join('\n');
 }
 

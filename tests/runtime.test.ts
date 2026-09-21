@@ -20,8 +20,8 @@ describe('ScripRuntime', () => {
     expect(runtime.getBudget('research').rampBudgetId).toBe('ramp-budget-research');
   });
 
-  it('rejects an unknown Ramp budget', () => {
+  it('rejects an unknown budget', () => {
     const runtime = new ScripRuntime('scrip.yaml', path.join(tmpDir, 'ramp.json'));
-    expect(() => runtime.getBudget('unknown')).toThrow('Unknown Ramp budget');
+    expect(() => runtime.getBudget('unknown')).toThrow('Unknown budget');
   });
 });

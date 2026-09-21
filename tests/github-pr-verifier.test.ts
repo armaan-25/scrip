@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HttpFetch } from '../src/ramp-oauth.js';
-import { GithubPrOutcomeVerifier } from '../src/verifiers/github-pr-verifier.js';
+import { GithubPrOutcomeVerifier, type HttpFetch } from '../src/verifiers/github-pr-verifier.js';
 
 function fakeFetch(responses: Record<string, unknown>): HttpFetch {
   return vi.fn(async (url) => {

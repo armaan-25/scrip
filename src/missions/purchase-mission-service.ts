@@ -106,7 +106,7 @@ export class PurchaseMissionService {
       reportTaskUsage: async receipt => { this.store.saveTaskReceipt(receipt); },
       getReceipt: async id => this.store.getTaskReceipt(id),
     };
-    return new TaskAuthorizationManager(this.config, gateway, undefined, undefined, undefined, undefined, this.store.leaseStateStore());
+    return new TaskAuthorizationManager(this.config, gateway, undefined, undefined, this.store.leaseStateStore());
   }
 
   get(consumerId: string, missionId: string): PurchaseMission {

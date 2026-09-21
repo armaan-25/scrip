@@ -290,47 +290,21 @@ different fingerprints and must not be conflated.
 
 ## What this is
 
-Scrip authorizes, meters, and settles autonomous work. The core unit is a
-task, not an inference request: one job that may spawn concurrent
-workers, call multiple model providers, hit paid APIs, and needs its full
-economics settled against a verified outcome. It sits between an agent
-(or a fleet of delegated subagents) and whatever it spends money on —
-authorizing and reserving spend *before* execution, then settling and
-reporting real usage to Ramp afterward. It is not a dashboard, not an
-after-the-fact usage tracker, and not a per-purchase card product — see
-"Why this exists between three things Ramp already ships" below for how
-it differs from what Ramp itself ships today.
+Scrip connects what a person authorizes an agent to buy with what the agent
+actually pays for and what was delivered. The current product surface is the
+mission slice (`src/missions/`), the card slice (`src/cards/`), the recovery
+case (`src/protect/`), and the live Natural money leg (`src/rails/`),
+described in the sections above. Underneath them is the task ledger
+(`src/lease.ts`, `src/store.ts`): atomic reserve/commit/cancel accounting for
+one authorized job and its delegated workers, with a CLI, HTTP API, and MCP
+server over it. The ledger predates the purchase work and is what the mission
+slice uses to reserve and settle exposure.
 
 Stack: TypeScript/Node, ESM (`"type": "module"`), Vitest, `js-yaml` for
 config, real `@anthropic-ai/sdk` and `openai` SDKs, `@modelcontextprotocol/sdk`
 for the MCP surface.
 
 ## Runtime boundaries
-
-### Why this exists between three things Ramp already ships
-
-Checked directly against Ramp's own docs and Ramp's own internal
-assistant, more than once, across different product surfaces:
-
-- **Funds API** — defines spend policy (a monthly limit per Fund). Doesn't
-  gate an individual call before it's made.
-- **AI Usage Tracking** (`ai-usage/unified`) — ingests metered usage
-  *after* it happens. Visibility-only, asynchronous ingestion, no
-  permission mechanism.
-- **Agent Cards** — does gate spend in real time, but per-purchase: a
-  single-use PAN capped at one merchant and one amount, explicitly
-  unsuited to card-on-file/metered billing (the pattern a real Anthropic
-  or OpenAI API key actually uses).
-- **AI cost monitoring** (ramp.com/ai-cost-monitoring) — alert/threshold
-  dashboard tooling: "set limits by key and notify... when spending hits
-  that threshold." No hierarchical delegation, no concurrent atomic
-  reservation.
-
-`TaskAuthorizationManager` is the piece that sits between policy and
-telemetry: it reads real Fund policy, authorizes and enforces spend
-*before* any provider call — including atomically across however many
-concurrent subagents one task spawns — then settles into the real
-telemetry pipe.
 
 ### Authorization domain (the actual product)
 
@@ -454,46 +428,21 @@ controller. The controller's own call cost is never charged to the
 task's own budget — billing it to the budget it's gatekeeping would be
 circular.
 
-### Real Ramp integration
+### Finance boundary
 
-`src/store.ts` defines `RampGateway`: `getReportedSpend(rampBudgetId)`
-reads policy, `reportTaskUsage(receipt)` reports settled usage.
-`MockRampGateway` (local-only, for tests/demos) and `RampApiGateway`
-(real) both implement it; `src/runtime.ts`'s `createRampGateway()` picks
-`RampApiGateway` when `RAMP_CLIENT_ID`/`RAMP_CLIENT_SECRET` env vars are
-present, else `MockRampGateway`.
+`src/store.ts` defines `RampGateway` (aliased `FinanceControlPlane`): the
+two calls the ledger makes outward, `getReportedSpend(budgetId)` to learn
+what a budget has already spent this month, and `reportTaskUsage(receipt)`
+to record a settled receipt. `MockRampGateway` is the only implementation:
+a local JSON-file receipt store. `src/runtime.ts`'s `createRampGateway()`
+returns it. The Ramp API integration that used to sit here (OAuth, Fund
+reads, usage broadcast, card issuance, x402) was removed on 2026-09-21; the
+design notes for it are under `docs/archive/`.
 
-- **`src/ramp-oauth.ts`** — `RampOAuthClient`: real client-credentials
-  OAuth via HTTP Basic Auth against `/developer/v1/token`, token caching.
-  Requires an explicit `scope` param — omitting it returns a valid-looking
-  but scopeless token that 403s everywhere (a real gotcha hit and fixed
-  during live testing).
-- **`src/ramp-api-gateway.ts`** — `RampApiGateway`: reads real Fund
-  balances (`GET /developer/v1/funds/{id}`, confirmed live schema),
-  resolves the `rampBudgetId` label used everywhere else in the system to
-  a real Fund UUID via a `fundIdsByBudget` map (only this class knows
-  that identifier space exists — everything else only ever sees the
-  label). Writes always go to `LocalReceiptStore` first (source of
-  truth), then best-effort broadcast via an optional injected `Meter` — a
-  failed broadcast is logged and swallowed, never thrown, since the money
-  is already committed by that point.
-- **`src/meter.ts`** — `Meter`: broadcasts settled usage to Ramp's AI
-  Usage Tracking (`POST /developer/v1/ai-usage/unified`), confirmed via
-  Ramp's own assistant to be the standard, provider-neutral ingestion
-  path for third-party platforms (not OpenRouter's separate partner-only
-  OTLP endpoint). Reuses the same OAuth app as the read side, scoped to
-  `ai_usage:write`. `usage.meters: []` is required on every event — Ramp's
-  own docs describe it as optional, but a real `400` proved otherwise.
-
-Full confirmed request/response shapes, real Fund IDs in the sandbox, and
-every live-verified gotcha are in `docs/ramp-api-notes.md`.
-
-Ramp remains the system of record for company money, spend policy, agent
-identities, cards, and provider-spend visibility. Scrip owns task
-identity, worker hierarchy, atomic reservations, attenuated delegation,
-active-task revocation, and outcome-backed settlement — it integrates
-through the `RampGateway`/`FinanceControlPlane` boundary rather than
-recreating any of what Ramp already owns.
+The one live rail in the repo, `src/rails/natural-settlement.ts`, does not
+attach here. It attaches at the mission slice's `PaymentCapabilityProvider`
+boundary, because that is where a payment fact enters the ledger, and it
+records Natural's transfer id as that fact.
 
 ### Outcome verification
 
@@ -694,22 +643,10 @@ basically done":
   `docker build` and `docker compose up --build` were run live. Found and
   fixed a real bug in the process — see the Dockerfile's own comment on
   the `/data` volume permission fix.
-- **`TaskCostEstimator` doesn't exist** — no pre-purchase cost-estimation
-  surface. `reserveCardPurchase()` (`src/ramp-agent-card.ts`,
-  `TaskAuthorizationManager.reserveCardPurchase`) mints a real single-use
-  Ramp card via `RampAgentCardIssuer`, capped at the reservation's
-  `maximumCost` — but confirmed live testing found this can only ever be a
-  real **Vault API** card (`POST /developer/v1/cards/vault`), not a real
-  **Agent Card**. Ramp's own docs state Agent Card issuance is built on
-  `https://api.ramp.com/agent-tools`, explicitly "not accessible to
-  external clients" — no direct REST call a third-party app makes can mint
-  one; only Ramp's own MCP server or the official `ramp-cli` binary can.
-  Live Vault API calls are additionally blocked right now by an
-  account-level entitlement gate ("vault API access holders" per Ramp's
-  changelog) — a support ticket is filed. Full trail in
-  `docs/ramp-api-notes.md`'s "Card issuance" section and
-  `scripts/smoke-test-agent-card.ts`. `MockCardIssuer` exercises the same
-  call path offline, including in `visuals/agent-card-live.html`.
+- **No pre-purchase cost estimation surface.** The card path in the
+  purchase-protection demo binds a single-use card to an approved record via
+  a simulated issuer (`src/cards/simulated-rail.ts`); no real card issuer is
+  wired in.
 - **No MPP/x402 machine-payment rails.**
 - **Gemini or other model providers** — the `ModelProvider` interface
   supports adding them the same way `OpenAIProvider` was added, but only

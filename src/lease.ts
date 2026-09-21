@@ -3,8 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { RampBudgetConfig, ScripConfig } from './config.js';
 import { computeCost, getModelPrice } from './pricing.js';
-import type { CardIssuer, IssuedCard } from './ramp-agent-card.js';
-import type { ExecutedPayment, PaymentExecutor } from './payment-executor.js';
 import {
   computeCostBreakdown,
   type ActionType,
@@ -150,16 +148,6 @@ export interface TaskEvidenceSnapshot {
 
 export type EconomicActionStatus = 'reserved' | 'committed' | 'cancelled';
 
-/** An ActionReservation that also minted a real Ramp Agent Card - returned by reserveCardPurchase. */
-export interface CardPurchaseReservation extends ActionReservation {
-  card: IssuedCard;
-}
-
-/** An ActionReservation settled against a pre-funded wallet rail (e.g. x402) instead of a minted instrument - returned by reserveWalletPayment. */
-export interface WalletPaymentReservation extends ActionReservation {
-  payment: ExecutedPayment;
-}
-
 export interface ActionReservation {
   reservationId: string;
   /** = reservationId. The pivot's canonical field name; both resolve the same reservation. */
@@ -251,9 +239,7 @@ export class TaskAuthorizationManager {
     private config: ScripConfig,
     private ramp: RampGateway,
     private storePath?: string,
-    private cardIssuer?: CardIssuer,
     private trackRecord?: AgentTrackRecordStore,
-    private paymentExecutor?: PaymentExecutor,
     private stateStore?: LeaseStateStore
   ) {
     if (this.stateStore || (this.storePath && fs.existsSync(this.storePath))) {
@@ -471,88 +457,6 @@ export class TaskAuthorizationManager {
     this.reservations.set(reservation.reservationId, reservation);
     this.persist();
     return reservation;
-  }
-
-  /**
-   * Like reserveAction, but for a 'purchase' that needs a real payment
-   * instrument: also mints a single-use Ramp Agent Card capped at
-   * maximumCost via the injected CardIssuer. Plain reserveAction(...,
-   * 'purchase', ...) is unchanged and never mints a card - only this method
-   * does, so existing purchase-type callers that don't need a real card are
-   * unaffected.
-   */
-  async reserveCardPurchase(
-    credential: string,
-    label: string,
-    maximumCost: number,
-    options: { merchant: string }
-  ): Promise<CardPurchaseReservation> {
-    if (!this.cardIssuer) {
-      throw new Error(
-        'reserveCardPurchase requires a CardIssuer - pass one to TaskAuthorizationManager (see createCardIssuer in src/runtime.ts)'
-      );
-    }
-    // Real Ramp Fund this card should draw from, so a CardIssuer that needs
-    // one (RampCliCardIssuer's `ramp funds creds <fundId>`) doesn't have to
-    // resolve budget config itself. RampAgentCardIssuer and MockCardIssuer
-    // both ignore it - only pull the budget lookup up front for the one
-    // implementation that actually needs it.
-    const lease = this.authenticate(credential);
-    const fundId = this.budget(this.getActiveAuthorization(lease.authorizationId).budgetName).rampFundId;
-
-    const reservation = this.reserveAction(credential, 'purchase', label, maximumCost, { merchant: options.merchant });
-    let card: IssuedCard;
-    try {
-      card = await this.cardIssuer.issueCard({
-        displayName: label,
-        maximumAmountUsd: maximumCost,
-        merchant: options.merchant,
-        fundId,
-      });
-    } catch (error) {
-      this.cancelAction(reservation.reservationId);
-      throw error;
-    }
-    reservation.metadata.card = card;
-    this.persist();
-    return { ...reservation, card };
-  }
-
-  /**
-   * Like reserveCardPurchase, but for a rail with no per-call ceiling of its
-   * own (e.g. a pre-funded x402 wallet - see payment-executor.ts). There is
-   * no instrument to mint and no fund to resolve: reserveAction()'s atomic
-   * math is the entire spend ceiling here, since the injected
-   * PaymentExecutor is never asked to enforce one and the rail underneath
-   * can't. If the executor's pay() throws, the reservation is cancelled the
-   * same way a failed card mint is - no partial state either way.
-   */
-  async reserveWalletPayment(
-    credential: string,
-    label: string,
-    maximumCost: number,
-    options: { merchant: string }
-  ): Promise<WalletPaymentReservation> {
-    if (!this.paymentExecutor) {
-      throw new Error(
-        'reserveWalletPayment requires a PaymentExecutor - pass one to TaskAuthorizationManager (see createPaymentExecutor in src/runtime.ts)'
-      );
-    }
-    const reservation = this.reserveAction(credential, 'purchase', label, maximumCost, { merchant: options.merchant });
-    let payment: ExecutedPayment;
-    try {
-      payment = await this.paymentExecutor.pay({
-        label,
-        maximumCost,
-        merchant: options.merchant,
-      });
-    } catch (error) {
-      this.cancelAction(reservation.reservationId);
-      throw error;
-    }
-    reservation.metadata.payment = payment;
-    this.persist();
-    return { ...reservation, payment };
   }
 
   commitAction(reservationId: string, actualCost: number, tokenUsage?: { inputTokens: number; outputTokens: number }): void {

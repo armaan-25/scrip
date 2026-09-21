@@ -8,7 +8,6 @@ import {
   SpendLimitExceededError,
   TaskAuthorizationManager,
 } from '../src/lease.js';
-import { MockPaymentExecutor } from '../src/payment-executor.js';
 import { AgentTrackRecordStore, MockRampGateway } from '../src/store.js';
 
 let tmpDir: string;
@@ -370,7 +369,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('records settlements to the track record store and computes resolve rate', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
 
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
@@ -400,7 +399,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('does not clamp delegate() for an agentId below minSettlementsForTrust', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -421,7 +420,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('clamps delegate() below the resolve-rate threshold once minSettlementsForTrust is met', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -448,7 +447,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('does not clamp a healthy agentId at or above the resolve-rate threshold', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'research',
       taskId: 'task-1',
@@ -469,7 +468,7 @@ describe('settleLease and adaptive delegation cap', () => {
   it('leaves delegate() unaffected for budgets that do not configure the adaptive cap', async () => {
     const storePath = path.join(tmpDir, 'track-record.json');
     const trackRecord = new AgentTrackRecordStore(storePath);
-    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, undefined, trackRecord);
+    const withTrackRecord = new TaskAuthorizationManager(loadConfig('scrip.yaml'), ramp, undefined, trackRecord);
     const root = await withTrackRecord.authorizeTask({
       budget: 'support', // support has no min_settlements_for_trust configured
       taskId: 'task-1',
@@ -484,107 +483,6 @@ describe('settleLease and adaptive delegation cap', () => {
 
     const next = withTrackRecord.delegate(root.credential, 'flaky-agent', 1);
     expect(next.lease.allowance).toBe(1);
-  });
-});
-
-describe('reserveWalletPayment', () => {
-  it('rejects when no PaymentExecutor is configured', async () => {
-    const root = await authorize(1);
-    await expect(
-      manager.reserveWalletPayment(root.credential, 'search query', 0.05, { merchant: 'exa.ai' })
-    ).rejects.toThrow(/requires a PaymentExecutor/);
-  });
-
-  it('reserves against the lease before ever calling the executor, then commits the real cost', async () => {
-    const executor = new MockPaymentExecutor();
-    const withExecutor = new TaskAuthorizationManager(
-      loadConfig('scrip.yaml'),
-      ramp,
-      undefined,
-      undefined,
-      undefined,
-      executor
-    );
-    const root = await withExecutor.authorizeTask({
-      budget: 'research',
-      taskId: 'task-1',
-      task: 'Pay for a search',
-      allowance: 1,
-    });
-
-    const reservation = await withExecutor.reserveWalletPayment(root.credential, 'search query', 0.05, {
-      merchant: 'exa.ai',
-    });
-    expect(reservation.payment.rail).toBe('mock');
-    expect(reservation.payment.transactionRef).toMatch(/^mock-tx-/);
-    expect(reservation.status).toBe('reserved');
-
-    withExecutor.commitAction(reservation.reservationId, 0.05);
-    const lease = withExecutor.getLeaseForCredential(root.credential);
-    expect(lease.spent).toBe(0.05);
-    expect(lease.pending).toBe(0);
-  });
-
-  it('never calls the executor when the requested amount exceeds what reserveAction allows', async () => {
-    let payCalls = 0;
-    const executor: { pay: () => Promise<never> } = {
-      pay: async () => {
-        payCalls++;
-        throw new Error('should never be called');
-      },
-    };
-    const withExecutor = new TaskAuthorizationManager(
-      loadConfig('scrip.yaml'),
-      ramp,
-      undefined,
-      undefined,
-      undefined,
-      executor
-    );
-    const root = await withExecutor.authorizeTask({
-      budget: 'research',
-      taskId: 'task-1',
-      task: 'Pay for a search',
-      allowance: 1,
-    });
-
-    // research's minRequestInputTokens/OutputTokens make anything below its
-    // minViableAllowance invalid, but the simplest over-the-authorized-cap
-    // case is just asking for more than the root lease has at all.
-    await expect(
-      withExecutor.reserveWalletPayment(root.credential, 'search query', 5, { merchant: 'exa.ai' })
-    ).rejects.toThrow(SpendLimitExceededError);
-    expect(payCalls).toBe(0);
-  });
-
-  it('cancels the reservation and leaves no pending spend when the executor throws', async () => {
-    const executor: { pay: () => Promise<never> } = {
-      pay: async () => {
-        throw new Error('rail unavailable');
-      },
-    };
-    const withExecutor = new TaskAuthorizationManager(
-      loadConfig('scrip.yaml'),
-      ramp,
-      undefined,
-      undefined,
-      undefined,
-      executor
-    );
-    const root = await withExecutor.authorizeTask({
-      budget: 'research',
-      taskId: 'task-1',
-      task: 'Pay for a search',
-      allowance: 1,
-    });
-
-    await expect(
-      withExecutor.reserveWalletPayment(root.credential, 'search query', 0.05, { merchant: 'exa.ai' })
-    ).rejects.toThrow('rail unavailable');
-
-    const lease = withExecutor.getLeaseForCredential(root.credential);
-    expect(lease.pending).toBe(0);
-    expect(lease.spent).toBe(0);
   });
 });
 
