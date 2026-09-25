@@ -11,7 +11,7 @@ import { PurchaseMissionService } from '../src/missions/purchase-mission-service
 import type { ContractInput, ExecutionProvider, HotelBooking } from '../src/missions/types.js';
 
 const booking: HotelBooking = {
-  quoteId: 'Q-1', merchant: 'hotel.example', hotelName: 'Boston Harbor Hotel', roomType: 'Double', city: 'Boston',
+  quoteId: 'Q-1', merchant: 'hotel.example', hotelName: 'Harborview Hotel', roomType: 'Double', city: 'Boston',
   startsOn: '2099-09-18', endsOn: '2099-09-20', total: 500, currency: 'USD', rating: 4.5,
   refundableUntil: '2099-09-16T23:59:00-04:00', cancellationTerms: 'Full refund until the stated deadline.',
 };
@@ -23,7 +23,7 @@ const terms: ContractInput = {
   recoveryPolicy: { allowMerchantCancellation: true, allowMerchantRefundRequest: true, allowReplacement: false, allowRebooking: false, disputeRequiresConfirmation: true },
 };
 const now = () => new Date('2099-06-01T00:00:00Z');
-const DESC = 'BOSTON HARBOR HOTEL';
+const DESC = 'HARBORVIEW HOTEL';
 
 function issuedBinding(issuer: SimulatedIssuer) {
   return issuer.issue({

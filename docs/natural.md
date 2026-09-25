@@ -28,8 +28,8 @@ On the page, each load is one live run, and the timeline starts playing only
 after the run finishes (about 40 seconds).
 
 Last verified 2026-09-25: 4 captures and 2 refunds, all `COMPLETED`, each
-capture tagged with the purchase fingerprint `04184b5fac7b…`, readable back
-with `natural-verify-live.ts`.
+capture tagged with the purchase fingerprint, readable back with
+`natural-verify-live.ts`.
 
 ## How the adapter works
 

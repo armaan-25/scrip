@@ -76,16 +76,16 @@ describe('TaskAuthorizationManager', () => {
 
   it('prevents concurrent reservations from oversubscribing one lease', async () => {
     const root = await authorize(1);
-    manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.7);
+    manager.reserveAction(root.credential, 'paid_api', 'search_api', 0.7);
     expect(() => manager.reserveAction(root.credential, 'purchase', 'vendor_x', 0.4)).toThrow(SpendLimitExceededError);
   });
 
   it('releases a cancelled reservation back to the lease', async () => {
     const root = await authorize(1);
-    const reservation = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.8);
+    const reservation = manager.reserveAction(root.credential, 'paid_api', 'search_api', 0.8);
     manager.cancelAction(reservation.reservationId);
     expect(reservation.status).toBe('cancelled');
-    expect(() => manager.reserveAction(root.credential, 'paid_api', 'exa_search', 1)).not.toThrow();
+    expect(() => manager.reserveAction(root.credential, 'paid_api', 'search_api', 1)).not.toThrow();
   });
 
   it('cancels and rejects a commit above the reserved maximum', async () => {
@@ -97,8 +97,8 @@ describe('TaskAuthorizationManager', () => {
 
   it('tracks a reservation through reserved -> committed with its metadata', async () => {
     const root = await authorize(1);
-    const reservation = manager.reserveAction(root.credential, 'paid_api', 'exa_search', 0.1, { vendor: 'exa' });
-    expect(reservation).toMatchObject({ status: 'reserved', maximumCost: 0.1, metadata: { vendor: 'exa' } });
+    const reservation = manager.reserveAction(root.credential, 'paid_api', 'search_api', 0.1, { vendor: 'search-vendor' });
+    expect(reservation).toMatchObject({ status: 'reserved', maximumCost: 0.1, metadata: { vendor: 'search-vendor' } });
     manager.commitAction(reservation.reservationId, 0.07);
     expect(reservation.status).toBe('committed');
     expect(manager.reserveAction(root.credential, 'other', 'x', 0.1).metadata).toEqual({});
@@ -115,7 +115,7 @@ describe('TaskAuthorizationManager', () => {
     const child = manager.delegate(root.credential, 'researcher-1', 0.5);
     const rootAction = manager.reserveAction(root.credential, 'purchase', 'dataset', 0.4);
     manager.commitAction(rootAction.reservationId, 0.2);
-    const childAction = manager.reserveAction(child.credential, 'paid_api', 'exa_search', 0.3);
+    const childAction = manager.reserveAction(child.credential, 'paid_api', 'search_api', 0.3);
     manager.commitAction(childAction.reservationId, 0.1);
 
     const receipt = await manager.settleTask(root.authorization.authorizationId);

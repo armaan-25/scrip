@@ -38,15 +38,15 @@ import { NaturalSettlementProvider, type LiveSettlement } from '../src/rails/nat
 
 const consumer = 'armaan';
 export const approvedBooking: HotelBooking = {
-  quoteId: 'Q-7731', merchant: 'hotel.example', hotelName: 'Boston Harbor Hotel', roomType: 'Double', city: 'Boston',
+  quoteId: 'Q-7731', merchant: 'hotel.example', hotelName: 'Harborview Hotel', roomType: 'Double', city: 'Boston',
   startsOn: '2099-09-18', endsOn: '2099-09-20', total: 500, currency: 'USD', rating: 4.5,
   refundableUntil: '2099-09-16T23:59:00-04:00', cancellationTerms: 'Full refund until the stated deadline.',
 };
 export const driftedBooking: HotelBooking = { ...approvedBooking, startsOn: '2099-09-19', endsOn: '2099-09-21' };
-const DESCRIPTOR = 'BOSTON HARBOR HOTEL';
+const DESCRIPTOR = 'HARBORVIEW HOTEL';
 
 const terms: ContractInput = {
-  goal: 'Book a refundable double at the Boston Harbor Hotel, Sept 18-20',
+  goal: 'Book a refundable double at the Harborview Hotel, Sept 18-20',
   category: 'travel', currency: 'USD', maximumTotal: 550,
   hardConstraints: [
     { type: 'amount_at_most', amount: 550 },
@@ -67,7 +67,7 @@ const terms: ContractInput = {
 };
 
 const manifest: AgentManifest = {
-  model: 'claude-opus-5', modelIsMutableAlias: false,
+  model: 'example-model-1', modelIsMutableAlias: false,
   instructionsDigest: 'sha256:9c1e', policyDigest: 'sha256:44ab', codeArtifact: 'git:9a05375',
   tools: [{ name: 'browser', version: '1.0.0', permissions: ['navigate', 'read'] }],
 };

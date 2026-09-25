@@ -38,7 +38,7 @@ const terms: ContractInput = {
 };
 
 const baseManifest: AgentManifest = {
-  model: 'claude-opus-5', modelIsMutableAlias: false,
+  model: 'example-model-1', modelIsMutableAlias: false,
   instructionsDigest: 'sha256:instructions-v1', policyDigest: 'sha256:policy-v1',
   codeArtifact: 'git:abc123',
   tools: [{ name: 'browser', version: '1.0.0', permissions: ['navigate', 'read'] }],

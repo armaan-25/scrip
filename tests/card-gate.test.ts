@@ -5,19 +5,19 @@ import type { CardAuthorizationRequest, CardBinding, SignedMerchantOrder } from 
 import type { HotelBooking } from '../src/missions/types.js';
 
 const approved: HotelBooking = {
-  quoteId: 'Q-1', merchant: 'hotel.example', hotelName: 'Boston Harbor Hotel', roomType: 'Double', city: 'Boston',
+  quoteId: 'Q-1', merchant: 'hotel.example', hotelName: 'Harborview Hotel', roomType: 'Double', city: 'Boston',
   startsOn: '2099-09-18', endsOn: '2099-09-20', total: 500, currency: 'USD', rating: 4.5,
   refundableUntil: '2099-09-16T23:59:00-04:00', cancellationTerms: 'Full refund until the stated deadline.',
 };
 const binding: CardBinding = {
   cardRef: 'simcard_1', last4: 'rd_1', operationKey: 'op-1', merchantId: 'hotel.example', purchaseDigest: purchaseDigest(approved),
-  merchantDescriptors: ['BOSTON HARBOR HOTEL'], ceiling: 550, exactTotal: 500, currency: 'USD',
+  merchantDescriptors: ['HARBORVIEW HOTEL'], ceiling: 550, exactTotal: 500, currency: 'USD',
   notBefore: '2099-01-01T00:00:00Z', expiresAt: '2099-09-15T12:00:00-04:00', singleUse: true, status: 'active',
 };
 const now = new Date('2099-06-01T00:00:00Z');
 const KEY = 'shared-key';
 const base: CardAuthorizationRequest = {
-  cardRef: 'simcard_1', merchantDescriptor: 'BOSTON HARBOR HOTEL', mcc: '7011', amount: 500, currency: 'USD', occurredAt: now.toISOString(),
+  cardRef: 'simcard_1', merchantDescriptor: 'HARBORVIEW HOTEL', mcc: '7011', amount: 500, currency: 'USD', occurredAt: now.toISOString(),
 };
 function order(booking: HotelBooking, sig?: string): SignedMerchantOrder {
   const unsigned = { merchantId: 'hotel.example', orderRef: 'o-1', booking, digest: purchaseDigest(booking) };
