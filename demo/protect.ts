@@ -18,11 +18,11 @@ import os from 'node:os';
 import path from 'node:path';
 import chalk from 'chalk';
 
-// The live rail reads NATURAL_API_KEY. Same pattern as demo/run-demo.ts.
+// The live rail reads NATURAL_API_KEY from .env when present.
 if (fs.existsSync('.env')) process.loadEnvFile('.env');
 import { loadConfig } from '../src/config.js';
 import { CardPaymentCapabilityProvider } from '../src/cards/card-payments.js';
-import { SimulatedAcceptMerchant, SimulatedIssuer, SimulatedWebMerchant, type AuthorizationRecord } from '../src/cards/simulated-rail.js';
+import { SimulatedAcceptMerchant, SimulatedIssuer, SimulatedWebMerchant } from '../src/cards/simulated-rail.js';
 import type { CardAuthorizationDecision } from '../src/cards/types.js';
 import type { AgentManifest } from '../src/missions/agent-identity.js';
 import { SqliteAgentRegistry } from '../src/missions/agent-registry.js';
@@ -196,7 +196,7 @@ export async function runProtectDemo(log: (line?: string) => void = console.log,
   });
   const describeDecision = (scenario: string, d: CardAuthorizationDecision, extra?: string) => {
     if (d.approved) step(scenario, 'SIMULATED issuer', `authorization approved (tier: ${d.tier})`, extra, 'ok');
-    else step(scenario, 'SIMULATED issuer', `authorization declined (tier: ${d.tier})`, d.reasons.join('; '), 'blocked');
+    else step(scenario, 'SIMULATED issuer', `authorization declined (tier: ${d.tier})`, (extra ? `${extra}: ` : '') + d.reasons.join('; '), 'blocked');
   };
   const captureCount = (missionId: string, service: PurchaseMissionService) =>
     issuer.decisions(service.get(consumer, missionId).operation?.key ?? '').filter(r => r.captured).length;
@@ -306,6 +306,7 @@ export async function runProtectDemo(log: (line?: string) => void = console.log,
     heading('4', 'Same drift, merchant NOT integrated: exact-purchase enforcement unavailable; caught afterward; recovery');
     async function noIntegration(openedBy: 'consumer' | 'detector'): Promise<ScenarioResult> {
       const tag = `no-integration/${openedBy}`;
+      log(chalk.bold(openedBy === 'detector' ? '  4a  case opened by Scrip\'s detector' : '  4b  same run, case opened by the person'));
       const exec = new SimulatedCheckout(web, { sells: driftedBooking });
       const s = await ratify(tag, exec);
       step(tag, 'scrip', 'card issued; this merchant sends no order data', 'exact-purchase enforcement: UNAVAILABLE at authorization', 'warn');
@@ -365,5 +366,3 @@ export async function runProtectDemo(log: (line?: string) => void = console.log,
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
   runProtectDemo().catch(error => { console.error(error); process.exit(1); });
 }
-
-export type { AuthorizationRecord };

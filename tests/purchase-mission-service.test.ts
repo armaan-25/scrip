@@ -413,8 +413,8 @@ describe('refundable hotel mission', () => {
     let authorizationId = '';
     await store.transaction(async () => {
       const manager = new TaskAuthorizationManager(config, {
-        getReportedSpend: async () => 0, reportTaskUsage: async () => {}, getReceipt: async () => undefined,
-      }, undefined, undefined, store.leaseStateStore());
+        getReportedSpend: async () => 0, reportTaskUsage: async () => {},
+      }, store.leaseStateStore());
       const root = await manager.authorizeTask({ budget: 'research', taskId: 'cascade-fixture', task: 'cascade', allowance: 10 });
       authorizationId = root.authorization.authorizationId;
       childCredential = manager.delegate(root.credential, 'child', 5).credential;

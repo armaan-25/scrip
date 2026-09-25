@@ -35,7 +35,7 @@
 </head>
 <body>
 <header>
-  <h1>Scrip: purchase-bound controls for agent cards <span class="badge">ALL RAIL ACTORS SIMULATED</span></h1>
+  <h1>Scrip: purchase-bound controls for agent cards <span class="badge" id="rail-badge">ALL RAIL ACTORS SIMULATED</span></h1>
   <p>approve → authorize → verify → recover. One approved purchase record is used by the card, the issuer gate, the fulfillment check, the receipt, and the recovery packet.</p>
 </header>
 <main>
@@ -67,6 +67,9 @@
   let fixture;
   const source = new EventSource('/events');
   source.addEventListener('fixture', e => { fixture = JSON.parse(e.data); });
+  source.addEventListener('rail', e => {
+    if (JSON.parse(e.data).rail === 'natural') $('rail-badge').textContent = 'CARD + MERCHANTS SIMULATED · MONEY LIVE ON NATURAL';
+  });
   source.addEventListener('approval', e => {
     const a = JSON.parse(e.data); const b = fixture.approved;
     $('approval-body').innerHTML = `

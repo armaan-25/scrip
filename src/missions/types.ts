@@ -43,7 +43,6 @@ export interface MandateEvidence {
    * Agent binding. Optional so contracts approved before agent identity
    * existed (the hotel regression fixtures) remain valid; when present,
    * execute() requires an authenticated agent matching these values.
-   * See SPEC.md "Persistent agent identity and version-bound authority".
    */
   agentLineageId?: string;
   authorizedAgentVersionId?: string;

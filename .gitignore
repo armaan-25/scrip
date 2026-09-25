@@ -1,6 +1,3 @@
 node_modules/
 dist/
-.scrip/
 .env
-scripts/demo-scenario-output.json
-.pgdata-dev/

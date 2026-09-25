@@ -1,9 +1,10 @@
 /**
  * Serves the purchase-protection demo as one page. Runs runProtectDemo()
  * once per /events connection and streams its timeline step by step, then
- * the result object. Same shape as the other visuals/ servers: node:http,
- * one static HTML file, server-sent events. Nothing here touches a
- * network; every rail-side actor in the demo is SIMULATED.
+ * the result object over node:http as server-sent events, with one static
+ * HTML file. The card, issuer and merchants are SIMULATED. With
+ * SCRIP_RAIL=natural, every page load also makes real $1.00 transfers on
+ * the Natural account behind NATURAL_API_KEY (swept back each run).
  *
  * Run: npm run visuals:protect   (PORT defaults to 8798)
  */
@@ -30,6 +31,7 @@ const server = http.createServer(async (req, res) => {
     send('fixture', { approved: approvedBooking, drifted: driftedBooking });
     try {
       const result = await runProtectDemo(() => {});
+      send('rail', { rail: result.rail });
       send('approval', result.approval);
       for (const step of result.timeline) {
         if (req.destroyed) return;

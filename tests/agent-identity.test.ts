@@ -389,9 +389,9 @@ describe('existing payment reconciliation is preserved', () => {
 /**
  * Adversarial regression tests. Each of these attacks SUCCEEDED against an
  * earlier revision of this code; they are kept as executable proof that the
- * corresponding control is present. See the whitepaper's evaluation agenda
- * (forged caller objects, stolen and expired credentials, missing scopes,
- * version rollback, revocation during dispatch).
+ * corresponding control is present: forged caller objects, stolen and
+ * expired credentials, missing scopes, version rollback, revocation during
+ * dispatch.
  */
 describe('adversarial: attacks that previously succeeded', () => {
   it('rejects a forged agent identity presented instead of a credential', async () => {

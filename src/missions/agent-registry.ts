@@ -81,7 +81,7 @@ export class SqliteAgentRegistry {
 
   /**
    * An operator change means different people run the software under the
-   * same identity, so SPEC.md requires revoking affected authority rather
+   * same identity, so the rule is to revoke affected authority rather
    * than asking for review.
    */
   changeOperator(lineageId: string, operator: string, now: Date): { lineage: AgentLineage; revokedMandates: string[] } {

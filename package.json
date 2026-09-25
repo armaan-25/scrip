@@ -5,9 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && mkdir -p dist/src/pricing && cp src/pricing/model_price.json dist/src/pricing/model_price.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "test": "vitest run",
-    "demo:deterministic": "tsx demo/deterministic-authorization.ts",
     "demo:protect": "tsx demo/protect.ts",
     "visuals:protect": "tsx visuals/protect-server.ts"
   },

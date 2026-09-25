@@ -1,23 +1,15 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import type { BudgetConfig, ScripConfig } from './config.js';
-import { computeCost, getModelPrice } from './pricing.js';
-import {
-  computeCostBreakdown,
-  type ActionType,
-  type ActionUsage,
-  type CostBreakdown,
-  type AgentTrackRecordStore,
-  type ModelUsage,
-  type OutcomeEvidence,
-  type FinanceGateway,
-  type TaskOutcomeStatus,
-  type TaskReceipt,
+import type {
+  ActionType,
+  ActionUsage,
+  FinanceGateway,
+  OutcomeEvidence,
+  TaskOutcomeStatus,
+  TaskReceipt,
 } from './store.js';
 
 export type AuthorizationStatus = 'active' | 'settled' | 'revoked';
-export type LeaseStatus = 'active' | 'settled' | 'revoked';
 
 export interface TaskAuthorization {
   authorizationId: string;
@@ -33,7 +25,8 @@ export interface TaskAuthorization {
   expiresAt: string;
 }
 
-export interface InferenceLease {
+/** One agent's slice of a task authorization. The root lease is depth 0; delegate() issues children. */
+export interface Lease {
   leaseId: string;
   authorizationId: string;
   parentLeaseId?: string;
@@ -41,159 +34,46 @@ export interface InferenceLease {
   allowance: number;
   spent: number;
   pending: number;
-  status: LeaseStatus;
+  status: AuthorizationStatus;
   expiresAt: string;
   depth: number;
-  /** Only set by settleLease() - independent of the root task's own outcome on TaskReceipt. See settleLease(). */
-  outcome?: TaskOutcomeStatus;
 }
 
 export interface IssuedTaskAuthorization {
   authorization: TaskAuthorization;
-  lease: InferenceLease;
+  lease: Lease;
   credential: string;
 }
-
-/**
- * Aliases toward the pivot's domain vocabulary (TaskExecution/ExecutionLease
- * replacing TaskAuthorization/InferenceLease as the product's primary
- * nouns). Field names (allowance/spent/pending) are unchanged for now - see
- * docs/PIVOT_AUDIT.md §8.4 on why a full field-level rename is staged
- * separately from the type-name rename, rather than done in the same pass.
- */
-export type TaskExecution = TaskAuthorization;
-export type IssuedTaskExecution = IssuedTaskAuthorization;
-export type ExecutionLease = InferenceLease;
 
 export interface IssuedChildLease {
-  lease: InferenceLease;
+  lease: Lease;
   credential: string;
 }
-
-/**
- * One node in a reconstructed run - a single lease plus the work attributed
- * to it and the sub-agents it delegated to.
- *
- * `spent` is authoritative (maintained by commitAction against the lease
- * itself). `costs`/`actionCount` are attributed from ActionEvents carrying
- * this node's leaseId, so they cover only events recorded since ActionEvent
- * gained that field - see `attributedCost` vs `spent` on RunReconstruction.
- */
-export interface RunNode {
-  leaseId: string;
-  agentId: string;
-  parentLeaseId?: string;
-  depth: number;
-  status: LeaseStatus;
-  /** Per-agent outcome from settleLease(), independent of the run's own. */
-  outcome?: TaskOutcomeStatus;
-  allowance: number;
-  /** This node's own spend, excluding descendants. */
-  spent: number;
-  /** This node's spend plus every descendant's - what the subtree cost. */
-  subtreeSpent: number;
-  /** Action-type breakdown for this node alone, from its own ActionEvents. */
-  costs: CostBreakdown;
-  /** Committed actions attributed to this node alone. */
-  actionCount: number;
-  children: RunNode[];
-}
-
-/**
- * A complete run: the whole delegation tree under one authorization, with
- * cost attributed per node.
- *
- * Ramp's semantic-layer pipeline (builders.ramp.com/post/ai-token-spend-management)
- * has to *infer* this shape - it reconstructs a session family by following
- * parentage across sessions, then splits the run's cost evenly across the
- * categories it finds, because it cannot attribute spend below run level.
- * Scrip does not infer either one: `parentLeaseId` is declared at delegate()
- * time, and every lease carries its own allowance/spent/outcome, so cost
- * attribution here is exact rather than apportioned.
- */
-export interface RunReconstruction {
-  authorizationId: string;
-  taskId: string;
-  task: string;
-  status: AuthorizationStatus;
-  /** Authorization-level totals - authoritative, always exact. */
-  authorized: number;
-  totalSpent: number;
-  /** Nodes in the tree, including the root lease. */
-  nodeCount: number;
-  /** Deepest delegation level reached; 0 when nothing was delegated. */
-  maxDepth: number;
-  /**
-   * Spend attributable to specific nodes. Equals totalSpent unless the run
-   * contains ActionEvents predating ActionEvent.leaseId, whose cost lands in
-   * `unattributedCost` instead.
-   */
-  attributedCost: number;
-  /** Committed spend that named no lease - see attributedCost. */
-  unattributedCost: number;
-  root: RunNode;
-}
-
-export interface TaskEvidenceSnapshot {
-  task: string;
-  allowance: number;
-  spent: number;
-  pending: number;
-  requestCount: number;
-  childAgents: number;
-  elapsedSeconds: number;
-  modelUsage: ModelUsage[];
-  requestedShortfall: number;
-}
-
-export type EconomicActionStatus = 'reserved' | 'committed' | 'cancelled';
 
 export interface ActionReservation {
   reservationId: string;
-  /** = reservationId. The pivot's canonical field name; both resolve the same reservation. */
-  actionId: string;
   authorizationId: string;
   leaseId: string;
   actionType: ActionType;
   label: string;
   maximumCost: number;
-  /** = maximumCost. The pivot's canonical field name for the same value. */
-  estimatedCostUsd: number;
-  status: EconomicActionStatus;
-  /**
-   * Free-form per-action detail (e.g. a purchase's vendor, a compute job's
-   * region). Always an object, never undefined, so callers never need an
-   * existence check before reading a key off it.
-   */
+  status: 'reserved' | 'committed' | 'cancelled';
+  /** Free-form per-action detail (e.g. a purchase's merchant). Always an object. */
   metadata: Record<string, unknown>;
 }
-
-/** Alias toward the pivot's domain vocabulary - EconomicAction is exactly this shape already. */
-export type EconomicAction = ActionReservation;
-
-/** Preserved name for callers already importing RequestReservation (e.g. src/proxy.ts). */
-export type RequestReservation = ActionReservation;
 
 interface ActionEvent {
   actionType: ActionType;
   label: string;
   cost: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  /**
-   * Which lease incurred this action. Optional because ActionEvent is
-   * persisted in PersistedLeaseState - events written before this field
-   * existed have no leaseId, and getRunReconstruction() attributes those
-   * to the run rather than to a node. New events always set it.
-   */
-  leaseId?: string;
+  leaseId: string;
 }
 
-interface InternalLease extends InferenceLease {
+interface InternalLease extends Lease {
   credentialHash: Buffer;
 }
 
-/** On-disk shape for optional cross-process persistence - see storePath on TaskAuthorizationManager. */
+/** Serialized ledger state, persisted by a LeaseStateStore (the mission store keeps it in SQLite). */
 export interface PersistedLeaseState {
   authorizations: TaskAuthorization[];
   leases: (Omit<InternalLease, 'credentialHash'> & { credentialHash: string })[];
@@ -208,7 +88,6 @@ export interface LeaseStateStore {
 
 export class SpendLimitExceededError extends Error {}
 export class InvalidCredentialError extends Error {}
-export class ApprovalRequiredError extends Error {}
 
 function hashCredential(credential: string): Buffer {
   return createHash('sha256').update(credential).digest();
@@ -218,62 +97,41 @@ function issueCredential(): string {
   return `scrip_${randomBytes(24).toString('base64url')}`;
 }
 
-/** The lowest-outputPrice model in a budget's allowed list — the mirror image of BudgetRouter's priciest-first pick. */
-function cheapestModel(allowedModels: string[]): string {
-  return [...allowedModels].sort((a, b) => getModelPrice(a).outputPrice - getModelPrice(b).outputPrice)[0];
-}
-
+/**
+ * The task ledger: one authorized allowance per task, attenuated leases for
+ * delegated workers, and atomic reserve/commit/cancel accounting so
+ * concurrent workers can never oversubscribe it. In-memory unless a
+ * LeaseStateStore is supplied, in which case every mutation is saved.
+ */
 export class TaskAuthorizationManager {
   private authorizations = new Map<string, TaskAuthorization>();
   private leases = new Map<string, InternalLease>();
   private reservations = new Map<string, ActionReservation>();
   private usage = new Map<string, ActionEvent[]>();
 
-  // Optional: authorizations/leases/reservations/usage are in-memory only by
-  // default (matches every caller before this was added - the MCP server and
-  // demo scripts are each one long-running process end to end, so they never
-  // needed this). A CLI is a fresh process per invocation, so it opts in by
-  // passing a storePath, the same JSON-file pattern LocalReceiptStore
-  // already uses for settled receipts.
   constructor(
     private config: ScripConfig,
     private finance: FinanceGateway,
-    private storePath?: string,
-    private trackRecord?: AgentTrackRecordStore,
     private stateStore?: LeaseStateStore
   ) {
-    if (this.stateStore || (this.storePath && fs.existsSync(this.storePath))) {
-      this.load();
+    const data = this.stateStore?.load();
+    if (data) {
+      this.authorizations = new Map(data.authorizations.map((a) => [a.authorizationId, a]));
+      this.leases = new Map(
+        data.leases.map((l) => [l.leaseId, { ...l, credentialHash: Buffer.from(l.credentialHash, 'base64') }])
+      );
+      this.reservations = new Map(data.reservations.map((r) => [r.reservationId, r]));
+      this.usage = new Map(Object.entries(data.usage));
     }
   }
 
-  private load(): void {
-    const data: PersistedLeaseState | undefined = this.stateStore
-      ? this.stateStore.load()
-      : JSON.parse(fs.readFileSync(this.storePath!, 'utf-8'));
-    if (!data) return;
-    this.authorizations = new Map(data.authorizations.map((a) => [a.authorizationId, a]));
-    this.leases = new Map(
-      data.leases.map((l) => [l.leaseId, { ...l, credentialHash: Buffer.from(l.credentialHash, 'base64') }])
-    );
-    this.reservations = new Map(data.reservations.map((r) => [r.reservationId, r]));
-    this.usage = new Map(Object.entries(data.usage));
-  }
-
   private persist(): void {
-    if (!this.storePath && !this.stateStore) return;
-    const data: PersistedLeaseState = {
+    this.stateStore?.save({
       authorizations: [...this.authorizations.values()],
       leases: [...this.leases.values()].map((l) => ({ ...l, credentialHash: l.credentialHash.toString('base64') })),
       reservations: [...this.reservations.values()],
       usage: Object.fromEntries(this.usage),
-    };
-    if (this.stateStore) {
-      this.stateStore.save(data);
-      return;
-    }
-    fs.mkdirSync(path.dirname(this.storePath!), { recursive: true });
-    fs.writeFileSync(this.storePath!, JSON.stringify(data, null, 2) + '\n');
+    });
   }
 
   private budget(name: string): BudgetConfig {
@@ -282,12 +140,8 @@ export class TaskAuthorizationManager {
     return budget;
   }
 
-  async getBudgetRemaining(name: string): Promise<number> {
+  private async getBudgetRemaining(name: string): Promise<number> {
     const budget = this.budget(name);
-    // Always the same label used to write receipts in settleTask() - a
-    // gateway that needs a different identifier (a real Fund ID) resolves
-    // that translation itself, since only it knows which identifier space
-    // its reads and writes actually live in.
     const reported = await this.finance.getReportedSpend(budget.budgetId);
     const activeAllowances = [...this.authorizations.values()]
       .filter((authorization) => authorization.budgetName === name && authorization.status === 'active')
@@ -351,6 +205,7 @@ export class TaskAuthorizationManager {
     return { authorization: { ...authorization }, lease: this.publicLease(lease), credential };
   }
 
+  /** Issues a child lease carved out of the parent's unspent, unreserved, undelegated allowance. */
   delegate(parentCredential: string, agentId: string, allowance: number, ttlMs?: number): IssuedChildLease {
     const parent = this.authenticate(parentCredential);
     const authorization = this.getActiveAuthorization(parent.authorizationId);
@@ -360,19 +215,6 @@ export class TaskAuthorizationManager {
     if (parent.depth >= budget.maxDelegationDepth) {
       throw new SpendLimitExceededError(
         `Cannot delegate from lease ${parent.leaseId}: at max delegation depth (${budget.maxDelegationDepth})`
-      );
-    }
-
-    const minViableAllowance = computeCost(
-      cheapestModel(budget.allowedModels),
-      budget.minRequestInputTokens,
-      budget.minRequestOutputTokens
-    );
-    if (allowance < minViableAllowance) {
-      throw new SpendLimitExceededError(
-        `Cannot delegate $${allowance.toFixed(6)}: below this budget's minimum viable allowance ` +
-          `$${minViableAllowance.toFixed(6)} (cheapest allowed model at ${budget.minRequestInputTokens}in/` +
-          `${budget.minRequestOutputTokens}out tokens)`
       );
     }
 
@@ -386,20 +228,6 @@ export class TaskAuthorizationManager {
       );
     }
 
-    // Adaptive cap: an agentId with a poor settleLease() track record gets
-    // clamped to a smaller slice of what it asked for, not rejected outright
-    // - see minSettlementsForTrust/lowTrustResolveRateThreshold on
-    // BudgetConfig. Unproven agents (below minSettlementsForTrust) and
-    // budgets that don't configure this at all are unaffected.
-    let grantedAllowance = allowance;
-    if (this.trackRecord && budget.minSettlementsForTrust !== undefined) {
-      const track = this.trackRecord.getResolveRate(agentId);
-      const threshold = budget.lowTrustResolveRateThreshold ?? 0.5;
-      if (track.total >= budget.minSettlementsForTrust && track.rate < threshold) {
-        grantedAllowance = Math.max(minViableAllowance, allowance * track.rate);
-      }
-    }
-
     const credential = issueCredential();
     const requestedExpiry = new Date(Date.now() + (ttlMs ?? Date.parse(parent.expiresAt) - Date.now())).toISOString();
     const lease: InternalLease = {
@@ -407,7 +235,7 @@ export class TaskAuthorizationManager {
       authorizationId: parent.authorizationId,
       parentLeaseId: parent.leaseId,
       agentId,
-      allowance: grantedAllowance,
+      allowance,
       spent: 0,
       pending: 0,
       status: 'active',
@@ -420,7 +248,7 @@ export class TaskAuthorizationManager {
     return { lease: this.publicLease(lease), credential };
   }
 
-  /** The generic primitive: atomic reserve/commit/cancel over any resource type, not just inference. */
+  /** Holds maximumCost against both the lease and the task until commitAction or cancelAction resolves it. */
   reserveAction(
     credential: string,
     actionType: ActionType,
@@ -439,16 +267,13 @@ export class TaskAuthorizationManager {
       );
     }
 
-    const actionId = randomUUID();
     const reservation: ActionReservation = {
-      reservationId: actionId,
-      actionId,
+      reservationId: randomUUID(),
       authorizationId: authorization.authorizationId,
       leaseId: lease.leaseId,
       actionType,
       label,
       maximumCost,
-      estimatedCostUsd: maximumCost,
       status: 'reserved',
       metadata,
     };
@@ -459,7 +284,7 @@ export class TaskAuthorizationManager {
     return reservation;
   }
 
-  commitAction(reservationId: string, actualCost: number, tokenUsage?: { inputTokens: number; outputTokens: number }): void {
+  commitAction(reservationId: string, actualCost: number): void {
     const reservation = this.getReservation(reservationId);
     if (actualCost > reservation.maximumCost + Number.EPSILON) {
       this.cancelAction(reservationId);
@@ -467,54 +292,27 @@ export class TaskAuthorizationManager {
         `Actual cost $${actualCost.toFixed(4)} exceeded its preauthorized maximum $${reservation.maximumCost.toFixed(4)}`
       );
     }
-    const lease = this.leases.get(reservation.leaseId)!;
-    const authorization = this.authorizations.get(reservation.authorizationId)!;
+    const { lease, authorization } = this.reservationOwners(reservation);
     lease.pending -= reservation.maximumCost;
     authorization.pending -= reservation.maximumCost;
     lease.spent += actualCost;
     authorization.spent += actualCost;
     reservation.status = 'committed';
-    this.usage.get(authorization.authorizationId)!.push({
-      actionType: reservation.actionType,
-      label: reservation.label,
-      cost: actualCost,
-      inputTokens: tokenUsage?.inputTokens,
-      outputTokens: tokenUsage?.outputTokens,
-      leaseId: reservation.leaseId,
-    });
+    const events = this.usage.get(authorization.authorizationId) ?? [];
+    events.push({ actionType: reservation.actionType, label: reservation.label, cost: actualCost, leaseId: lease.leaseId });
+    this.usage.set(authorization.authorizationId, events);
     this.reservations.delete(reservationId);
     this.persist();
   }
 
   cancelAction(reservationId: string): void {
     const reservation = this.getReservation(reservationId);
-    const lease = this.leases.get(reservation.leaseId)!;
-    const authorization = this.authorizations.get(reservation.authorizationId)!;
+    const { lease, authorization } = this.reservationOwners(reservation);
     lease.pending -= reservation.maximumCost;
     authorization.pending -= reservation.maximumCost;
     reservation.status = 'cancelled';
     this.reservations.delete(reservationId);
     this.persist();
-  }
-
-  /** Thin wrapper over reserveAction: adds the inference-specific allowedModels check. */
-  reserveRequest(credential: string, model: string, maximumCost: number): ActionReservation {
-    const lease = this.authenticate(credential);
-    const authorization = this.getActiveAuthorization(lease.authorizationId);
-    const policy = this.budget(authorization.budgetName);
-    if (!policy.allowedModels.includes(model)) {
-      throw new SpendLimitExceededError(`Model "${model}" is not allowed by budget ${authorization.budgetId}`);
-    }
-    return this.reserveAction(credential, 'inference', model, maximumCost);
-  }
-
-  /** Thin wrapper over commitAction: records token counts alongside cost. */
-  commitRequest(reservationId: string, inputTokens: number, outputTokens: number, actualCost: number): void {
-    this.commitAction(reservationId, actualCost, { inputTokens, outputTokens });
-  }
-
-  cancelRequest(reservationId: string): void {
-    this.cancelAction(reservationId);
   }
 
   async settleTask(
@@ -527,8 +325,6 @@ export class TaskAuthorizationManager {
     const leases = [...this.leases.values()].filter((lease) => lease.authorizationId === authorizationId);
     leases.forEach((lease) => (lease.status = 'settled'));
     const events = this.usage.get(authorizationId) ?? [];
-    const budget = this.budget(authorization.budgetName);
-    const { modelUsage, actionUsage } = this.aggregateUsage(events);
     const receipt: TaskReceipt = {
       receiptId: randomUUID(),
       authorizationId,
@@ -540,14 +336,10 @@ export class TaskAuthorizationManager {
       authorized: authorization.allowance,
       actual: authorization.spent,
       returned: authorization.allowance - authorization.spent,
-      childAgents: leases.filter((lease) => lease.parentLeaseId).length,
       workerCount: leases.filter((lease) => lease.parentLeaseId).length,
-      requestCount: events.length,
       actionCount: events.length,
-      modelUsage,
-      actionUsage,
-      costs: computeCostBreakdown(actionUsage),
-      costCenter: budget.costCenter,
+      actionUsage: aggregateByActionType(events),
+      costCenter: this.budget(authorization.budgetName).costCenter,
       startedAt: authorization.createdAt,
       settledAt: new Date().toISOString(),
       outcome: outcome?.status ?? 'unknown',
@@ -559,95 +351,14 @@ export class TaskAuthorizationManager {
     return receipt;
   }
 
-  /**
-   * Settles one non-root lease's outcome independently of the root task's
-   * settleTask() - the root's outcome (on TaskReceipt) says whether the
-   * whole task succeeded; this says whether *this specific delegated agent*
-   * did. Two agents under the same task can settle differently: one that
-   * completed its slice and one that didn't. Recorded to trackRecord (if
-   * configured) so delegate() can consult the agentId's history on future,
-   * unrelated authorizations - see getResolveRate() and the adaptive cap in
-   * delegate().
-   *
-   * A lease can only be settled once, by whichever of settleLease() or the
-   * root's settleTask() runs first - settleTask() still marks every lease
-   * 'settled' for spend-accounting purposes, but leaves outcome alone if
-   * this already set it.
-   */
-  settleLease(leaseId: string, outcome: TaskOutcomeStatus): void {
-    const lease = this.leases.get(leaseId);
-    if (!lease) throw new Error(`No such lease ${leaseId}`);
-    if (!lease.parentLeaseId) {
-      throw new Error(`Lease ${leaseId} is a root lease - settle it via settleTask(), not settleLease()`);
-    }
-    if (lease.status !== 'active') {
-      throw new Error(`Cannot settle lease ${leaseId}: already ${lease.status}`);
-    }
-    if (lease.pending > 0) throw new Error(`Cannot settle lease ${leaseId} with requests in flight`);
-    lease.status = 'settled';
-    lease.outcome = outcome;
-    this.trackRecord?.addSettlement({
-      agentId: lease.agentId,
-      leaseId: lease.leaseId,
-      authorizationId: lease.authorizationId,
-      outcome,
-      settledAt: new Date().toISOString(),
-    });
-    this.persist();
-  }
-
-  /** Read-only, non-destructive - unlike settleTask(), doesn't close or settle anything. */
-  getEvidenceSnapshot(authorizationId: string, requestedShortfall: number): TaskEvidenceSnapshot {
-    const authorization = this.getActiveAuthorization(authorizationId);
-    const childAgents = [...this.leases.values()].filter(
-      (lease) => lease.authorizationId === authorizationId && lease.parentLeaseId
-    ).length;
-    const events = this.usage.get(authorizationId) ?? [];
-    const { modelUsage } = this.aggregateUsage(events);
-
-    return {
-      task: authorization.task,
-      allowance: authorization.allowance,
-      spent: authorization.spent,
-      pending: authorization.pending,
-      requestCount: events.length,
-      childAgents,
-      elapsedSeconds: (Date.now() - Date.parse(authorization.createdAt)) / 1000,
-      modelUsage,
-      requestedShortfall,
-    };
-  }
-
-  /** Scoped to exactly the blocked credential's lease - increases both its and the task's ceiling. */
-  grantAdditionalAllowance(credential: string, amount: number): void {
-    const lease = this.authenticate(credential);
-    const authorization = this.getActiveAuthorization(lease.authorizationId);
-    lease.allowance += amount;
-    authorization.allowance += amount;
-    this.persist();
-  }
-
   getAuthorization(authorizationId: string): TaskAuthorization {
     const authorization = this.authorizations.get(authorizationId);
     if (!authorization) throw new Error(`Unknown task authorization "${authorizationId}"`);
     return { ...authorization };
   }
 
-  getAuthorizationForCredential(credential: string): TaskAuthorization {
-    const lease = this.authenticate(credential);
-    const authorization = this.getActiveAuthorization(lease.authorizationId);
-    this.assertNotExpired(lease, authorization);
-    return { ...authorization };
-  }
-
-  getLeaseForCredential(credential: string): InferenceLease {
-    const lease = this.authenticate(credential);
-    this.assertNotExpired(lease, this.getActiveAuthorization(lease.authorizationId));
-    return this.publicLease(lease);
-  }
-
-  /** Every lease under a task - root first, then children in delegation order. Read-only, used by `scrip task tree`. */
-  getLeaseTree(authorizationId: string): InferenceLease[] {
+  /** Every lease under a task, root first, then by delegation depth. */
+  getLeaseTree(authorizationId: string): Lease[] {
     return [...this.leases.values()]
       .filter((lease) => lease.authorizationId === authorizationId)
       .sort((a, b) => a.depth - b.depth)
@@ -655,116 +366,10 @@ export class TaskAuthorizationManager {
   }
 
   /**
-   * Reconstructs the complete run under one authorization: the delegation
-   * tree, with each node's own spend, its subtree's spend, and its own
-   * action-type breakdown.
-   *
-   * Read-only and non-destructive, like getEvidenceSnapshot() - it settles
-   * and closes nothing, so it is safe to call on an active run.
-   *
-   * Unlike getLeaseTree(), which returns a flat depth-sorted list, this
-   * returns the nested structure with cost attached, which is what makes a
-   * run answerable at the sub-agent level: "the root held only a fifth of
-   * this run's spend; both merged results came from children."
+   * Revokes the task and every lease under it. With preservePending, in-flight
+   * reservations stay open so an operation already dispatched can still be
+   * committed or cancelled against its original hold.
    */
-  getRunReconstruction(authorizationId: string): RunReconstruction {
-    const authorization = this.authorizations.get(authorizationId);
-    if (!authorization) throw new Error(`No such task authorization ${authorizationId}`);
-
-    const leases = [...this.leases.values()].filter((lease) => lease.authorizationId === authorizationId);
-    const root = leases.find((lease) => !lease.parentLeaseId);
-    if (!root) throw new Error(`Task authorization ${authorizationId} has no root lease`);
-
-    // Attribute each committed action to the lease that incurred it. Events
-    // predating ActionEvent.leaseId have none and are counted at run level.
-    const events = this.usage.get(authorizationId) ?? [];
-    const eventsByLease = new Map<string, ActionEvent[]>();
-    let unattributedCost = 0;
-    for (const event of events) {
-      if (!event.leaseId) {
-        unattributedCost += event.cost;
-        continue;
-      }
-      const forLease = eventsByLease.get(event.leaseId) ?? [];
-      forLease.push(event);
-      eventsByLease.set(event.leaseId, forLease);
-    }
-
-    const childrenByParent = new Map<string, InternalLease[]>();
-    for (const lease of leases) {
-      if (!lease.parentLeaseId) continue;
-      const siblings = childrenByParent.get(lease.parentLeaseId) ?? [];
-      siblings.push(lease);
-      childrenByParent.set(lease.parentLeaseId, siblings);
-    }
-
-    const build = (lease: InternalLease): RunNode => {
-      const own = eventsByLease.get(lease.leaseId) ?? [];
-      const children = (childrenByParent.get(lease.leaseId) ?? []).map(build);
-      return {
-        leaseId: lease.leaseId,
-        agentId: lease.agentId,
-        parentLeaseId: lease.parentLeaseId,
-        depth: lease.depth,
-        status: lease.status,
-        outcome: lease.outcome,
-        allowance: lease.allowance,
-        spent: lease.spent,
-        subtreeSpent: lease.spent + children.reduce((total, child) => total + child.subtreeSpent, 0),
-        costs: computeCostBreakdown(this.aggregateUsage(own).actionUsage),
-        actionCount: own.length,
-        children,
-      };
-    };
-
-    const tree = build(root);
-    return {
-      authorizationId,
-      taskId: authorization.taskId,
-      task: authorization.task,
-      status: authorization.status,
-      authorized: authorization.allowance,
-      totalSpent: authorization.spent,
-      nodeCount: leases.length,
-      maxDepth: leases.reduce((deepest, lease) => Math.max(deepest, lease.depth), 0),
-      attributedCost: events.reduce((total, event) => total + (event.leaseId ? event.cost : 0), 0),
-      unattributedCost,
-      root: tree,
-    };
-  }
-
-  /** Shared by settleTask() and getEvidenceSnapshot(): modelUsage is inference-only (token-level detail); actionUsage rolls up every action type, inference included. */
-  private aggregateUsage(events: ActionEvent[]): { modelUsage: ModelUsage[]; actionUsage: ActionUsage[] } {
-    const byModel = new Map<string, ModelUsage>();
-    const byActionType = new Map<ActionType, ActionUsage>();
-    for (const event of events) {
-      const actionAggregate = byActionType.get(event.actionType) ?? {
-        actionType: event.actionType,
-        count: 0,
-        cost: 0,
-      };
-      actionAggregate.count += 1;
-      actionAggregate.cost += event.cost;
-      byActionType.set(event.actionType, actionAggregate);
-
-      if (event.actionType === 'inference') {
-        const modelAggregate = byModel.get(event.label) ?? {
-          model: event.label,
-          requests: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          cost: 0,
-        };
-        modelAggregate.requests += 1;
-        modelAggregate.inputTokens += event.inputTokens ?? 0;
-        modelAggregate.outputTokens += event.outputTokens ?? 0;
-        modelAggregate.cost += event.cost;
-        byModel.set(event.label, modelAggregate);
-      }
-    }
-    return { modelUsage: [...byModel.values()], actionUsage: [...byActionType.values()] };
-  }
-
   revokeTask(authorizationId: string, options: { preservePending?: boolean } = {}): void {
     const authorization = this.getActiveAuthorization(authorizationId);
     if (authorization.pending > 0 && !options.preservePending) throw new Error('Cannot revoke a task with requests in flight');
@@ -773,48 +378,6 @@ export class TaskAuthorizationManager {
       .filter((lease) => lease.authorizationId === authorizationId)
       .forEach((lease) => (lease.status = 'revoked'));
     this.persist();
-  }
-
-  /**
-   * Crash-recovery / expiry-cleanup sweep. assertNotExpired only reacts when
-   * a caller touches an expired lease again - a task whose worker crashed or
-   * simply never returned leaves its authorization stuck 'active' forever,
-   * with any in-flight reservation's money stuck in `pending` and no caller
-   * left to cancel or settle it. Unlike revokeTask (which refuses to revoke
-   * anything with pending > 0, since a live caller might still resolve it),
-   * this only touches authorizations already past expiresAt: it cancels
-   * every reservation still 'reserved' under each one - releasing pending
-   * back through the normal cancelAction path - then marks the
-   * authorization and its leases 'revoked', the same terminal state
-   * assertNotExpired already puts a touched lease into. Intended to be
-   * invoked periodically (e.g. a cron running `scrip task sweep-expired`) -
-   * this method itself has no scheduler, since one already exists in every
-   * real deployment target (cron, a scheduled Lambda, etc.).
-   */
-  sweepExpired(now: Date = new Date()): { revokedAuthorizations: string[]; cancelledReservations: string[] } {
-    const nowMs = now.getTime();
-    const revokedAuthorizations: string[] = [];
-    const cancelledReservations: string[] = [];
-
-    for (const authorization of this.authorizations.values()) {
-      if (authorization.status !== 'active' || Date.parse(authorization.expiresAt) > nowMs) continue;
-
-      for (const reservation of this.reservations.values()) {
-        if (reservation.authorizationId === authorization.authorizationId && reservation.status === 'reserved') {
-          this.cancelAction(reservation.reservationId);
-          cancelledReservations.push(reservation.reservationId);
-        }
-      }
-
-      authorization.status = 'revoked';
-      [...this.leases.values()]
-        .filter((lease) => lease.authorizationId === authorization.authorizationId)
-        .forEach((lease) => (lease.status = 'revoked'));
-      revokedAuthorizations.push(authorization.authorizationId);
-    }
-
-    this.persist();
-    return { revokedAuthorizations, cancelledReservations };
   }
 
   private authenticate(credential: string): InternalLease {
@@ -841,14 +404,33 @@ export class TaskAuthorizationManager {
     }
   }
 
-  private getReservation(reservationId: string): RequestReservation {
+  private getReservation(reservationId: string): ActionReservation {
     const reservation = this.reservations.get(reservationId);
-    if (!reservation) throw new Error(`Unknown request reservation "${reservationId}"`);
+    if (!reservation) throw new Error(`Unknown reservation "${reservationId}"`);
     return reservation;
   }
 
-  private publicLease(lease: InternalLease): InferenceLease {
+  /** A reservation is only ever created against an existing lease and authorization, and neither is ever deleted. */
+  private reservationOwners(reservation: ActionReservation): { lease: InternalLease; authorization: TaskAuthorization } {
+    const lease = this.leases.get(reservation.leaseId);
+    const authorization = this.authorizations.get(reservation.authorizationId);
+    if (!lease || !authorization) throw new Error(`Reservation "${reservation.reservationId}" has no owning lease`);
+    return { lease, authorization };
+  }
+
+  private publicLease(lease: InternalLease): Lease {
     const { credentialHash: _credentialHash, ...publicLease } = lease;
     return { ...publicLease };
   }
+}
+
+function aggregateByActionType(events: ActionEvent[]): ActionUsage[] {
+  const byType = new Map<ActionType, ActionUsage>();
+  for (const event of events) {
+    const aggregate = byType.get(event.actionType) ?? { actionType: event.actionType, count: 0, cost: 0 };
+    aggregate.count += 1;
+    aggregate.cost += event.cost;
+    byType.set(event.actionType, aggregate);
+  }
+  return [...byType.values()];
 }

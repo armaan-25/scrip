@@ -1,8 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
- * Persistent agent identity and version-bound financial authority
- * (SPEC.md "Persistent agent identity and version-bound authority").
+ * Persistent agent identity and version-bound financial authority.
  *
  * Two version axes exist and must not be conflated:
  *   - OutcomeContract.version  - what the human authorized.
@@ -100,7 +99,7 @@ export interface AgentVersion {
 
 /**
  * Classification of a manifest change, and the authority transition it
- * forces. Per SPEC.md: unclassified changes fail closed, and a dependency
+ * forces. Unclassified changes fail closed, and a dependency
  * or code change never earns an automatic "harmless" exemption.
  */
 export type ChangeClass =
@@ -233,7 +232,7 @@ export function secretMatches(secret: string, expectedHash: string): boolean {
  * Diffs two manifests and classifies each change.
  *
  * The deliberate asymmetry: `codeArtifact` is classified `unknown_effect`,
- * never `display_only`. SPEC.md forbids treating a dependency or code
+ * never `display_only`. Never treat a dependency or code
  * change as harmless on the strength of a version label, so a code change
  * requires review even when the operator believes it is a patch.
  */
