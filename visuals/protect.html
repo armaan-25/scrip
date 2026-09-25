@@ -68,7 +68,9 @@
   const source = new EventSource('/events');
   source.addEventListener('fixture', e => { fixture = JSON.parse(e.data); });
   source.addEventListener('rail', e => {
-    if (JSON.parse(e.data).rail === 'natural') $('rail-badge').textContent = 'CARD + MERCHANTS SIMULATED · MONEY LIVE ON NATURAL';
+    if (JSON.parse(e.data).rail !== 'natural') return;
+    $('rail-badge').textContent = 'CARD + MERCHANTS SIMULATED · MONEY LIVE ON NATURAL';
+    $('approval-body').innerHTML = '<div>status</div><div>running live on Natural: real transfers settle first, then the timeline plays (about a minute)</div>';
   });
   source.addEventListener('approval', e => {
     const a = JSON.parse(e.data); const b = fixture.approved;

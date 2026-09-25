@@ -29,9 +29,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     send('fixture', { approved: approvedBooking, drifted: driftedBooking });
+    send('rail', { rail: process.env.SCRIP_RAIL === 'natural' ? 'natural' : 'simulated' });
     try {
       const result = await runProtectDemo(() => {});
-      send('rail', { rail: result.rail });
       send('approval', result.approval);
       for (const step of result.timeline) {
         if (req.destroyed) return;
@@ -43,6 +43,7 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       send('error', { message: (error as Error).message });
     }
+    res.end();
     return;
   }
   res.writeHead(404); res.end();

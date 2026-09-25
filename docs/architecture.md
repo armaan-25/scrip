@@ -173,6 +173,4 @@ validation, `js-yaml` for `scrip.yaml`, `@naturalpay/sdk` for the live rail,
 
 Scrip began as a spend-authorization layer for autonomous agents: task
 allowances, delegated worker leases, and atomic reservations across concurrent
-subagents. That ledger is what the purchase flow still settles through. The
-earlier Ramp integration and the CLI, HTTP, MCP, Postgres, and Docker surfaces
-were removed on 2026-09-21; the code is in git history.
+subagents. That ledger is what the purchase flow still settles through.
