@@ -144,10 +144,17 @@ export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; l
           tags: { scrip_trace_id: traceId, scrip_order_fp: fingerprintTag },
         });
         service.recordPaymentSubmitted(traceId, { paymentId: payment.paymentId, instanceId: traceId, fingerprintTag, amountCents: paidFor.totalCents });
-        await connector.pollOnce();
-        const finalStatus = await waitForTerminal(owner, payment.paymentId);
+        // A new hold can take a moment to appear in Natural's list; keep polling until the connector has decided it.
+        const decisionFor = () => service.events(traceId).find(e => e.type === 'hold_decided' && e.data.paymentId === payment.paymentId);
+        for (let i = 0; i < 20 && !decisionFor(); i++) { await connector.pollOnce(); if (!decisionFor()) await sleep(500); }
+        const decided = decisionFor();
+        const denied = decided?.type === 'hold_decided' && decided.data.decision === 'denied';
+        const observed = await waitForTerminal(owner, payment.paymentId);
+        // The sandbox can mark the hold denied before the payment record catches up; say so rather than print a stale status.
+        const finalStatus = denied && !TERMINAL_STATUSES.has(observed) ? `APPROVAL_DENIED (hold denied on Natural; payment record still shows ${observed})`
+          : !decided ? `${observed} (connector has not decided this hold yet)` : observed;
         service.recordSettlement(traceId, { paymentId: payment.paymentId, status: finalStatus });
-        result.scenarios.push({ name: scripted.name, traceId, outcome: finalStatus === 'COMPLETED' ? 'paid' : 'denied_at_payment', finalStatus });
+        result.scenarios.push({ name: scripted.name, traceId, outcome: finalStatus === 'COMPLETED' ? 'paid' : 'denied_at_payment', finalStatus: denied ? 'APPROVAL_DENIED' : observed });
       }
       for (const line of renderTimeline(service.events(traceId))) log(`  ${line}`);
     }

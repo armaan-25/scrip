@@ -136,6 +136,33 @@ it in a row of `missions.sqlite`, written in the same transaction as the
 mission events. It reports settled receipts through `FinanceGateway` in
 `src/store.ts`.
 
+## Flight trace and hold connector
+
+A second slice, beside the hotel one, that records *interpretation* and gates
+real Natural payments on it.
+
+```text
+request → person confirms requirements → agent states its interpretation
+        → diff (what it misunderstood) → agent picks an offer → rules check
+        → purchase approved: fingerprint = sha256(canonical(offer)), budget reserved
+        → agent pays on Natural, tagged scrip_trace_id + scrip_order_fp
+        → Natural holds it (1-cent agent limit) → connector.pollOnce()
+        → decideHold: fingerprint, amount, and paying agent must all match
+        → approve (money moves) or deny with reasons (nothing moves)
+        → settlement recorded; budget committed or released
+```
+
+| file | owns |
+|---|---|
+| `src/flights/` | flight requirements, offers, `checkOffer`, `diffRequirements` |
+| `src/trace/trace-store.ts` | append-only event log per purchase (SQLite, update/delete blocked) |
+| `src/trace/trace-service.ts` | the steps above; reuses the agent registry and budget ledger |
+| `src/trace/timeline.ts` | plain-English timeline of a trace |
+| `src/rails/hold-decision.ts` | `decideHold`, the pure approve/deny rule |
+| `src/rails/natural-hold-connector.ts` | polls Natural holds; untagged holds are left for a human; never approves on error |
+| `src/rails/natural-sdk-port.ts`, `fake-natural.ts` | real Natural (sandbox) and an in-memory stand-in behind one interface |
+| `demo/flight-trace.ts` | the three-agent demo |
+
 ## Files
 
 | path | owns |

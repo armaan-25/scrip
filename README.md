@@ -73,6 +73,21 @@ tagged with the purchase fingerprint. Details in [docs/natural.md](docs/natural.
    until the refund posts. It runs twice: 4a is opened by Scrip's detector,
    4b by the person.
 
+## Flight trace demo: what the agent understood, and payments gated on it
+
+```bash
+npm run demo:flight                      # offline, instant
+SCRIP_RAIL=sandbox npm run demo:flight   # live on Natural's sandbox (fake money)
+```
+
+One request ("NYC to SF, Oct 16–18, direct only, refundable, under $600"), three agents:
+
+- **Faithful:** understands correctly, picks the nonstop, pays. Natural holds the payment; Scrip's connector checks the paid-for order's fingerprint against the approved purchase and **approves** it.
+- **Misreads:** treats "direct only" and "refundable" as optional. The trace shows exactly what it misunderstood, and its layover pick is **blocked before any payment**.
+- **Switches:** approved for the nonstop, but pays for the layover. The connector sees the fingerprint and amount don't match and **denies** the hold; no money moves, and Natural records Scrip's reason.
+
+The live run needs `NATURAL_SANDBOX_API_KEY` and `NATURAL_SANDBOX_AGENT_KEY`. Details in [docs/natural.md](docs/natural.md).
+
 ## Docs
 
 - [How it works](docs/architecture.md): the layers, one purchase end to end,

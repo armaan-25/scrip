@@ -50,6 +50,22 @@ a card yet; it can only settle.
   adapter polls until a terminal status and fails the reconcile on anything
   other than `COMPLETED`.
 
+## Holds and approvals (verified in the sandbox, 2026-09-28)
+
+The flight demo gates real sandbox payments using Natural's own controls:
+
+- A payment over an agent's limit returns normally but **holds** (`IN_REVIEW`); no money moves.
+- The **agent cannot approve its own hold** (403). The owner key can approve (`COMPLETED`) or deny (`APPROVAL_DENIED`), and a denial reason is stored on Natural's approval record.
+- Tags on payments and payment requests read back in full; holds report the paying agent and why they held.
+- Limits must be above zero, so the demo uses a 1-cent agent limit to hold every payment, and restores the previous limit afterwards.
+- Tags do not carry from a payment request to the payment that fulfils it; follow the payment's link to the request.
+- Status can lag the decision: a denied hold may show the payment as `IN_REVIEW` for a while.
+
+Scrip's connector approves a held payment only if its `scrip_order_fp` tag equals
+the approved purchase's fingerprint, the amount is exact, and the paying agent is
+the one the purchase was approved for. The fingerprint tag comes from a simulated
+seller quote in the demo; in production the seller or Natural would vouch for it.
+
 ## What would move to Natural
 
 1. **The issuer gate.** `authorizeCard()` and `verifyMerchantOrder()` would run
