@@ -65,6 +65,9 @@ Scrip's connector approves a held payment only if its `scrip_order_fp` tag equal
 the approved purchase's fingerprint, the amount is exact, and the paying agent is
 the one the purchase was approved for. The fingerprint tag comes from a simulated
 seller quote in the demo; in production the seller or Natural would vouch for it.
+The connector does not yet check *who* is paid: an agent that tagged the approved
+fingerprint and paid the exact amount to a different recipient would pass. Matching
+the payee is the next check to add.
 
 ## What would move to Natural
 

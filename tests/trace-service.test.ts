@@ -78,4 +78,16 @@ describe('FlightTraceService', () => {
     expect(lines.join('\n')).toMatch(/Person asked/);
     expect(lines.join('\n')).toMatch(/APPROVED/);
   });
+  it('refuses to settle on a non-final status, then commits when the payment really completes', async () => {
+    world = createTraceWorld();
+    const { service, agent, mandateId, ledger } = world;
+    const traceId = service.start('armaan', demoRequest);
+    service.confirm(traceId, confirmedRequirements);
+    await service.proposePurchase(traceId, agent, mandateId, nonstopOffer, 'agt_test');
+    expect(() => service.recordSettlement(traceId, { paymentId: 'pay_1', status: 'IN_REVIEW' })).toThrow(/not final/);
+    service.recordSettlement(traceId, { paymentId: 'pay_1', status: 'COMPLETED' });
+    const approved = service.events(traceId).find(e => e.type === 'purchase_approved');
+    if (approved?.type !== 'purchase_approved') throw new Error('missing purchase_approved');
+    expect(ledger.getAuthorization(approved.data.authorizationId).spent).toBeCloseTo(559);
+  });
 });

@@ -97,7 +97,7 @@ describe('NaturalHoldConnector', () => {
     natural.failNextApprove = true;
     const first = await connector.pollOnce();
     expect(first.errors).toHaveLength(1);
-    expect(world.service.hasApprovedPayment(traceId)).toBe(false);
+    expect(world.service.events(traceId).some(e => e.type === 'hold_decided')).toBe(false);
     expect(await natural.getPaymentStatus(payment.paymentId)).toBe('IN_REVIEW');
     const second = await connector.pollOnce();
     expect(second.approved).toHaveLength(1);
@@ -118,5 +118,24 @@ describe('NaturalHoldConnector', () => {
     const [hold] = await natural.listPendingHolds();
     if (!hold) throw new Error('expected a hold');
     await expect(natural.agent(AGENT).approveHold(hold.approvalId)).rejects.toMatchObject({ status: 403 });
+  });
+  it('does not approve a second payment when an approve response was lost', async () => {
+    const traceId = await approvedTrace();
+    const first = await agentPays(traceId);
+    natural.loseNextApproveResponse = true; // Natural applies the approve, but the reply never arrives
+    const lost = await connector.pollOnce();
+    expect(lost.errors).toHaveLength(1);
+    expect(await natural.getPaymentStatus(first.paymentId)).toBe('COMPLETED');
+    const second = await agentPays(traceId);
+    const result = await connector.pollOnce();
+    expect(result.denied).toHaveLength(1);
+    expect(await natural.getPaymentStatus(second.paymentId)).toBe('APPROVAL_DENIED');
+  });
+
+  it('reports a failure to list holds as an error instead of throwing', async () => {
+    natural.failNextList = true;
+    const result = await connector.pollOnce();
+    expect(result.errors).toHaveLength(1);
+    expect(result.approved).toEqual([]);
   });
 });

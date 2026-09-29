@@ -12,7 +12,8 @@ export type TraceEvent =
   | { type: 'purchase_approved'; data: { offer: FlightOffer; fingerprint: string; totalCents: number; naturalAgentId: string; authorizationId: string; reservationId: string } }
   | { type: 'payment_submitted'; data: { paymentId: string; instanceId: string; fingerprintTag: string; amountCents: number } }
   | { type: 'payment_held'; data: { approvalId: string; paymentId: string; reasons: string[]; senderAgentId: string | null } }
+  | { type: 'hold_decision_started'; data: { approvalId: string; paymentId: string; decision: 'approved' | 'denied' } }
   | { type: 'hold_decided'; data: { approvalId: string; paymentId: string; decision: 'approved' | 'denied'; reasons: string[] } }
-  | { type: 'payment_settled'; data: { paymentId: string; status: string } };
+  | { type: 'payment_settled'; data: { paymentId: string; status: string; note?: string } };
 
 export type RecordedEvent = TraceEvent & { traceId: string; seq: number; at: string };

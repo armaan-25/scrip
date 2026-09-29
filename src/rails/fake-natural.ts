@@ -12,6 +12,9 @@ interface FakeApproval { paymentId: string; status: 'pending' | 'approved' | 'de
 export class FakeNatural implements NaturalPort {
   limitCents: number | null = null;
   failNextApprove = false;
+  /** Apply the next approve on Natural's side but throw as if the response was lost. */
+  loseNextApproveResponse = false;
+  failNextList = false;
   private seq = 0;
   private payments = new Map<string, FakePayment>();
   private approvals = new Map<string, FakeApproval>();
@@ -31,6 +34,7 @@ export class FakeNatural implements NaturalPort {
   }
 
   async listPendingHolds(): Promise<HeldPayment[]> {
+    if (this.failNextList) { this.failNextList = false; throw new NaturalPortError(503, 'temporarily unavailable'); }
     return [...this.approvals].filter(([, a]) => a.status === 'pending').map(([approvalId, a]) => {
       const p = this.payment(a.paymentId);
       return { approvalId, paymentId: a.paymentId, amountCents: p.amountCents, tags: p.tags, senderAgentId: p.senderAgentId, reasons: ['limitExceeded:perTransactionAmount'] };
@@ -42,6 +46,7 @@ export class FakeNatural implements NaturalPort {
     const a = this.pendingApproval(approvalId);
     a.status = 'approved';
     this.payment(a.paymentId).status = 'COMPLETED';
+    if (this.loseNextApproveResponse) { this.loseNextApproveResponse = false; throw new NaturalPortError(504, 'response lost'); }
   }
 
   async denyHold(approvalId: string): Promise<void> {

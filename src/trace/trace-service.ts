@@ -9,6 +9,7 @@ import type { FlightOffer, FlightRequirements } from '../flights/types.js';
 import type { TaskAuthorizationManager } from '../lease.js';
 import type { AuthenticatedAgent } from '../missions/agent-identity.js';
 import type { SqliteAgentRegistry } from '../missions/agent-registry.js';
+import { TERMINAL_STATUSES } from '../rails/natural-port.js';
 import type { RecordedEvent, TraceEvent } from './events.js';
 import { orderFingerprint } from './fingerprint.js';
 import type { SqliteTraceStore } from './trace-store.js';
@@ -74,9 +75,12 @@ export class FlightTraceService {
   recordPaymentSubmitted(traceId: string, data: Data<'payment_submitted'>): void { this.append(traceId, { type: 'payment_submitted', data }); }
   recordHold(traceId: string, data: Data<'payment_held'>): void { this.append(traceId, { type: 'payment_held', data }); }
   recordDecision(traceId: string, data: Data<'hold_decided'>): void { this.append(traceId, { type: 'hold_decided', data }); }
+  /** Written before the Natural call, so a lost response still counts as a possible payment. */
+  recordDecisionStarted(traceId: string, data: Data<'hold_decision_started'>): void { this.append(traceId, { type: 'hold_decision_started', data }); }
 
-  /** Final Natural status. Spends the reserved budget on COMPLETED; releases it on anything else. */
+  /** Final Natural status. Spends the reserved budget on COMPLETED; releases it on any other final status. */
   recordSettlement(traceId: string, data: Data<'payment_settled'>): void {
+    if (!TERMINAL_STATUSES.has(data.status)) throw new Error(`Payment status ${data.status} is not final; not settling yet`);
     const approved = this.find(traceId, 'purchase_approved');
     const alreadySettled = this.events(traceId).some(e => e.type === 'payment_settled');
     this.append(traceId, { type: 'payment_settled', data });
@@ -101,8 +105,14 @@ export class FlightTraceService {
     return this.events(traceId).some(e => e.type === 'hold_decided' && e.data.approvalId === approvalId);
   }
 
-  hasApprovedPayment(traceId: string): boolean {
-    return this.events(traceId).some(e => e.type === 'hold_decided' && e.data.decision === 'approved');
+  /**
+   * True if any hold for this purchase was approved, or an approval was sent
+   * whose outcome is unknown. `exceptApprovalId` excludes the hold being
+   * retried, so a failed attempt on the same hold doesn't block its own retry.
+   */
+  hasApprovedPayment(traceId: string, exceptApprovalId?: string): boolean {
+    return this.events(traceId).some(e =>
+      (e.type === 'hold_decided' || e.type === 'hold_decision_started') && e.data.decision === 'approved' && e.data.approvalId !== exceptApprovalId);
   }
 
   private refuse(traceId: string, reasons: string[]): PurchaseDecision {

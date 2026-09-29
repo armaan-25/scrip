@@ -49,11 +49,11 @@ export class SdkNaturalPort implements NaturalPort {
   }
 
   async approveHold(approvalId: string): Promise<void> {
-    try { await this.client.approvals.approve({ idempotencyKey: randomUUID(), approvalId }); } catch (error) { throw wrap(error); }
+    try { await this.client.approvals.approve({ idempotencyKey: `approve:${approvalId}`, approvalId }); } catch (error) { throw wrap(error); }
   }
 
   async denyHold(approvalId: string, reason: string): Promise<void> {
-    try { await this.client.approvals.deny({ idempotencyKey: randomUUID(), approvalId, reason: reason.slice(0, 500) }); } catch (error) { throw wrap(error); }
+    try { await this.client.approvals.deny({ idempotencyKey: `deny:${approvalId}`, approvalId, reason: reason.slice(0, 500) }); } catch (error) { throw wrap(error); }
   }
 
   async getPaymentStatus(paymentId: string): Promise<string> {

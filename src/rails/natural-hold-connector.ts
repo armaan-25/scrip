@@ -15,7 +15,10 @@ export class NaturalHoldConnector {
 
   async pollOnce(): Promise<PollResult> {
     const result: PollResult = { approved: [], denied: [], skipped: [], errors: [] };
-    for (const held of await this.owner.listPendingHolds()) {
+    let holds;
+    try { holds = await this.owner.listPendingHolds(); }
+    catch (error) { result.errors.push(`list holds: ${(error as Error).message}`); return result; }
+    for (const held of holds) {
       const traceId = held.tags.scrip_trace_id;
       if (!traceId) { result.skipped.push(held.approvalId); continue; }
 
@@ -29,7 +32,8 @@ export class NaturalHoldConnector {
         this.traces.recordHold(traceId, { approvalId: held.approvalId, paymentId: held.paymentId, reasons: held.reasons, senderAgentId: held.senderAgentId });
       }
 
-      const decision = decideHold(this.traces.approvedPurchase(traceId), held, this.traces.hasApprovedPayment(traceId));
+      const decision = decideHold(this.traces.approvedPurchase(traceId), held, this.traces.hasApprovedPayment(traceId, held.approvalId));
+      this.traces.recordDecisionStarted(traceId, { approvalId: held.approvalId, paymentId: held.paymentId, decision: decision.approve ? 'approved' : 'denied' });
       try {
         if (decision.approve) await this.owner.approveHold(held.approvalId);
         else await this.owner.denyHold(held.approvalId, decision.reasons.join('; '));

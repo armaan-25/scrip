@@ -23,10 +23,11 @@ export function renderTimeline(events: RecordedEvent[]): string[] {
       case 'purchase_approved': return `Purchase approved: ${e.data.offer.offerId}, ${usd(e.data.totalCents)}, fingerprint ${short(e.data.fingerprint)}`;
       case 'payment_submitted': return `Agent paid ${usd(e.data.amountCents)} on Natural (${e.data.paymentId}), tagged fingerprint ${short(e.data.fingerprintTag)}`;
       case 'payment_held': return `Natural held the payment (${e.data.approvalId}) until checked`;
+      case 'hold_decision_started': return `Connector: sending ${e.data.decision === 'approved' ? 'approval' : 'denial'} to Natural for ${e.data.approvalId}`;
       case 'hold_decided': return e.data.decision === 'approved'
         ? 'Connector: fingerprint matches the approved purchase → APPROVED'
         : `Connector: DENIED → ${e.data.reasons.join('; ')}`;
-      case 'payment_settled': return `Final Natural status: ${e.data.status}`;
+      case 'payment_settled': return `Final Natural status: ${e.data.status}${e.data.note ? ` (${e.data.note})` : ''}`;
     }
   });
 }

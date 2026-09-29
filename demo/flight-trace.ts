@@ -48,8 +48,9 @@ const manifest: AgentManifest = {
   tools: [{ name: 'browser', version: '1.0.0', permissions: ['navigate', 'read'] }],
 };
 
+export type ScenarioOutcome = 'paid' | 'blocked_before_payment' | 'denied_at_payment' | 'undecided';
 export interface FlightDemoResult {
-  scenarios: { name: string; traceId: string; outcome: 'paid' | 'blocked_before_payment' | 'denied_at_payment'; finalStatus?: string }[];
+  scenarios: { name: string; traceId: string; outcome: ScenarioOutcome; finalStatus?: string }[];
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -62,6 +63,34 @@ async function waitForTerminal(owner: NaturalPort, paymentId: string): Promise<s
     await sleep(500);
   }
   return status;
+}
+
+/**
+ * Poll until the connector decides this payment's hold (new holds can take a
+ * moment to appear in Natural's list), then record a final status only once
+ * it is final. A denied hold is final even if the sandbox payment record lags.
+ */
+async function settle(
+  service: FlightTraceService, connector: NaturalHoldConnector, owner: NaturalPort,
+  traceId: string, paymentId: string, log: (line?: string) => void,
+): Promise<{ outcome: ScenarioOutcome; finalStatus?: string }> {
+  const decisionFor = () => service.events(traceId).find(e => e.type === 'hold_decided' && e.data.paymentId === paymentId);
+  for (let i = 0; i < 20 && !decisionFor(); i++) {
+    const poll = await connector.pollOnce();
+    for (const error of poll.errors) log(`  connector error (will retry): ${error}`);
+    if (!decisionFor()) await sleep(500);
+  }
+  const decided = decisionFor();
+  if (decided?.type !== 'hold_decided') return { outcome: 'undecided' };
+  const observed = await waitForTerminal(owner, paymentId);
+  if (decided.data.decision === 'denied') {
+    const note = TERMINAL_STATUSES.has(observed) ? undefined : `hold denied on Natural; payment record still shows ${observed}`;
+    service.recordSettlement(traceId, { paymentId, status: 'APPROVAL_DENIED', note });
+    return { outcome: 'denied_at_payment', finalStatus: 'APPROVAL_DENIED' };
+  }
+  if (!TERMINAL_STATUSES.has(observed)) return { outcome: 'undecided', finalStatus: observed };
+  service.recordSettlement(traceId, { paymentId, status: observed });
+  return { outcome: observed === 'COMPLETED' ? 'paid' : 'denied_at_payment', finalStatus: observed };
 }
 
 export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; log?: (line?: string) => void } = {}): Promise<FlightDemoResult> {
@@ -77,49 +106,57 @@ export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; l
   const ledger = new TaskAuthorizationManager(config, { getReportedSpend: async () => 0, reportTaskUsage: async () => {} });
   const service = new FlightTraceService({ store, registry, ledger, budget: 'research', now });
 
-  let owner: NaturalPort;
-  let payer: AgentPayer;
-  let naturalAgentId: string;
-  let recipient: string;
   let restore: () => Promise<void> = async () => {};
-
-  if (mode === 'sandbox') {
-    const ownerKey = process.env.NATURAL_SANDBOX_API_KEY ?? '';
-    const agentKey = process.env.NATURAL_SANDBOX_AGENT_KEY ?? '';
-    if (!ownerKey.startsWith('sk_ntl_sandbox_') || !agentKey.startsWith('ak_ntl_sandbox_')) throw new Error('Sandbox run needs NATURAL_SANDBOX_API_KEY and NATURAL_SANDBOX_AGENT_KEY (sandbox keys only)');
-    const baseUrl = 'https://api.sandbox.natural.com';
-    const run = `scrip-flight-${Date.now()}`;
-    const sdkOwner = new SdkNaturalPort({ token: ownerKey, baseUrl, instanceId: run });
-    const agents = await sdkOwner.listAgentIds();
-    const only = agents.length === 1 ? agents[0] : undefined;
-    if (!only) throw new Error(`Expected exactly one sandbox agent, found ${agents.length}`);
-    naturalAgentId = only.id;
-    await sdkOwner.fundWallet(100000);
-    await sdkOwner.setAgentLimits(naturalAgentId, { perTransaction: 1 });
-    restore = () => sdkOwner.setAgentLimits(naturalAgentId, only.limits ?? null);
-    owner = sdkOwner;
-    payer = new SdkAgentPayer({ token: agentKey, baseUrl, instanceId: run });
-    recipient = 'payment-recipient@sandbox.natural.test';
-    log(`Rail: LIVE Natural sandbox (fake money). Agent ${naturalAgentId} limited to 1 cent so every payment is held.`);
-  } else {
-    const fake = new FakeNatural();
-    fake.limitCents = 1;
-    owner = fake;
-    naturalAgentId = 'agt_offline';
-    payer = fake.agent(naturalAgentId);
-    recipient = 'seller';
-    log('Rail: offline (in-memory Natural). Set SCRIP_RAIL=sandbox for a live sandbox run.');
-  }
-  log('Limits: the paid-for fingerprint comes from a simulated seller quote; agents are scripted; requirements arrive structured.');
-
-  const connector = new NaturalHoldConnector(owner, service);
-  const lineage = registry.registerLineage({ ownerId: 'armaan', operator: 'acme-labs', displayName: 'Flight agent' }, now());
-  const version = registry.registerVersion({ lineageId: lineage.lineageId, manifest, registeredBy: 'armaan' }, now());
-  const credential = registry.issueCredential({ lineageId: lineage.lineageId, versionId: version.versionId, expiresAt: '2099-12-31T00:00:00Z' }, now());
-  const agentAuth = registry.authenticate(credential.credentialId, credential.secret, now());
-
+  const restoreSafely = async () => {
+    try { await restore(); } catch (error) { log(`WARNING: could not restore the sandbox agent's limits: ${(error as Error).message}`); }
+    restore = async () => {};
+  };
+  const onInterrupt = () => { void restoreSafely().finally(() => process.exit(130)); };
   const result: FlightDemoResult = { scenarios: [] };
+
   try {
+    let owner: NaturalPort;
+    let payer: AgentPayer;
+    let naturalAgentId: string;
+    let recipient: string;
+
+    if (mode === 'sandbox') {
+      const ownerKey = process.env.NATURAL_SANDBOX_API_KEY ?? '';
+      const agentKey = process.env.NATURAL_SANDBOX_AGENT_KEY ?? '';
+      if (!ownerKey.startsWith('sk_ntl_sandbox_') || !agentKey.startsWith('ak_ntl_sandbox_')) throw new Error('Sandbox run needs NATURAL_SANDBOX_API_KEY and NATURAL_SANDBOX_AGENT_KEY (sandbox keys only)');
+      const baseUrl = 'https://api.sandbox.natural.com';
+      const run = `scrip-flight-${Date.now()}`;
+      const sdkOwner = new SdkNaturalPort({ token: ownerKey, baseUrl, instanceId: run });
+      const agents = await sdkOwner.listAgentIds();
+      const only = agents.length === 1 ? agents[0] : undefined;
+      if (!only) throw new Error(`Expected exactly one sandbox agent, found ${agents.length}`);
+      const agentId = only.id;
+      naturalAgentId = agentId;
+      await sdkOwner.fundWallet(100000);
+      restore = () => sdkOwner.setAgentLimits(agentId, only.limits ?? null);
+      process.once('SIGINT', onInterrupt);
+      await sdkOwner.setAgentLimits(agentId, { perTransaction: 1 });
+      owner = sdkOwner;
+      payer = new SdkAgentPayer({ token: agentKey, baseUrl, instanceId: run });
+      recipient = 'payment-recipient@sandbox.natural.test';
+      log(`Rail: LIVE Natural sandbox (fake money). Agent ${naturalAgentId} limited to 1 cent so every payment is held.`);
+    } else {
+      const fake = new FakeNatural();
+      fake.limitCents = 1;
+      owner = fake;
+      naturalAgentId = 'agt_offline';
+      payer = fake.agent(naturalAgentId);
+      recipient = 'seller';
+      log('Rail: offline (in-memory Natural). Set SCRIP_RAIL=sandbox for a live sandbox run.');
+    }
+    log('Limits: the paid-for fingerprint comes from a simulated seller quote and the connector does not yet check who is paid; agents are scripted; requirements arrive structured.');
+
+    const connector = new NaturalHoldConnector(owner, service);
+    const lineage = registry.registerLineage({ ownerId: 'armaan', operator: 'acme-labs', displayName: 'Flight agent' }, now());
+    const version = registry.registerVersion({ lineageId: lineage.lineageId, manifest, registeredBy: 'armaan' }, now());
+    const credential = registry.issueCredential({ lineageId: lineage.lineageId, versionId: version.versionId, expiresAt: '2099-12-31T00:00:00Z' }, now());
+    const agentAuth = registry.authenticate(credential.credentialId, credential.secret, now());
+
     for (const scripted of AGENTS) {
       log();
       log(`── Agent: ${scripted.name} ──`);
@@ -134,9 +171,7 @@ export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; l
       const chosen = scripted.choose();
       const decision = await service.proposePurchase(traceId, agentAuth, mandate.mandateId, chosen, naturalAgentId);
 
-      if (!decision.approved) {
-        result.scenarios.push({ name: scripted.name, traceId, outcome: 'blocked_before_payment' });
-      } else {
+      if (decision.approved) {
         const paidFor = scripted.payFor(chosen);
         const fingerprintTag = orderFingerprint(paidFor); // simulated seller quote for what is actually being bought
         const payment = await payer.pay({
@@ -144,22 +179,18 @@ export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; l
           tags: { scrip_trace_id: traceId, scrip_order_fp: fingerprintTag },
         });
         service.recordPaymentSubmitted(traceId, { paymentId: payment.paymentId, instanceId: traceId, fingerprintTag, amountCents: paidFor.totalCents });
-        // A new hold can take a moment to appear in Natural's list; keep polling until the connector has decided it.
-        const decisionFor = () => service.events(traceId).find(e => e.type === 'hold_decided' && e.data.paymentId === payment.paymentId);
-        for (let i = 0; i < 20 && !decisionFor(); i++) { await connector.pollOnce(); if (!decisionFor()) await sleep(500); }
-        const decided = decisionFor();
-        const denied = decided?.type === 'hold_decided' && decided.data.decision === 'denied';
-        const observed = await waitForTerminal(owner, payment.paymentId);
-        // The sandbox can mark the hold denied before the payment record catches up; say so rather than print a stale status.
-        const finalStatus = denied && !TERMINAL_STATUSES.has(observed) ? `APPROVAL_DENIED (hold denied on Natural; payment record still shows ${observed})`
-          : !decided ? `${observed} (connector has not decided this hold yet)` : observed;
-        service.recordSettlement(traceId, { paymentId: payment.paymentId, status: finalStatus });
-        result.scenarios.push({ name: scripted.name, traceId, outcome: finalStatus === 'COMPLETED' ? 'paid' : 'denied_at_payment', finalStatus: denied ? 'APPROVAL_DENIED' : observed });
+        const settled = await settle(service, connector, owner, traceId, payment.paymentId, log);
+        result.scenarios.push({ name: scripted.name, traceId, ...settled });
+      } else {
+        result.scenarios.push({ name: scripted.name, traceId, outcome: 'blocked_before_payment' });
       }
       for (const line of renderTimeline(service.events(traceId))) log(`  ${line}`);
+      const last = result.scenarios.at(-1);
+      if (last?.outcome === 'undecided') log('  NOT SETTLED: the connector had not decided this hold when the demo moved on.');
     }
   } finally {
-    await restore();
+    await restoreSafely();
+    process.removeListener('SIGINT', onInterrupt);
     store.close();
     registry.close();
     fs.rmSync(dir, { recursive: true, force: true });
