@@ -90,4 +90,13 @@ describe('FlightTraceService', () => {
     if (approved?.type !== 'purchase_approved') throw new Error('missing purchase_approved');
     expect(ledger.getAuthorization(approved.data.authorizationId).spent).toBeCloseTo(559);
   });
+  it('announces each recorded event, in order, to an optional listener', async () => {
+    world = createTraceWorld();
+    const seen: string[] = [];
+    world.service.onEvent = e => seen.push(e.type);
+    const traceId = world.service.start('armaan', demoRequest);
+    world.service.confirm(traceId, confirmedRequirements);
+    world.service.recordInterpretation(traceId, world.agent, { ...confirmedRequirements });
+    expect(seen).toEqual(['request_received', 'requirements_confirmed', 'agent_interpretation_recorded', 'interpretation_compared']);
+  });
 });

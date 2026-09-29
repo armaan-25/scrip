@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scrip trace</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #111111; --muted: #6b6b6b; --line: #e8e8e8; --panel: #fafafa;
+    --good: #1a7f4b; --bad: #c0392b; --warn: #a86b00; --chip: #f1f1f1;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e0e0e; --fg: #ededed; --muted: #8f8f8f; --line: #232323; --panel: #141414;
+            --good: #3fbf7f; --bad: #ef6b5b; --warn: #e0a43a; --chip: #1d1d1d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+           padding: 18px 28px; border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 600; letter-spacing: -0.01em; }
+  .brand span { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .controls { display: flex; align-items: center; gap: 10px; }
+  select, button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+                   border-radius: 8px; padding: 7px 12px; }
+  button { background: var(--fg); color: var(--bg); border-color: var(--fg); cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #status { color: var(--muted); font-size: 13px; min-width: 120px; text-align: right; }
+  .request { padding: 14px 28px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .request b { color: var(--fg); font-weight: 500; }
+  main { display: grid; grid-template-columns: 220px minmax(0, 1fr) 340px; min-height: calc(100vh - 110px); }
+  aside, section { padding: 20px 24px; }
+  aside { border-right: 1px solid var(--line); }
+  .right { border-left: 1px solid var(--line); background: var(--panel); }
+  h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 14px; }
+  .agent { padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .agent:last-child { border-bottom: 0; }
+  .agent .name { font-weight: 500; }
+  .agent .outcome { font-size: 12px; margin-top: 2px; }
+  .agent.active .name::before { content: "› "; }
+  .chip { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .step { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line);
+          animation: in 0.25s ease-out; }
+  .step .t { color: var(--muted); font: 12px/1.6 var(--mono); }
+  .step .who { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .ids { font: 12px var(--mono); color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; }
+  .pay { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; animation: in 0.25s ease-out; }
+  .pay .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .pay .amt { font-weight: 600; }
+  .pay .hist { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .pay .reason { margin-top: 6px; font-size: 12px; }
+  .note { margin-top: 18px; font-size: 12px; color: var(--muted); }
+  .flow { display: flex; align-items: center; gap: 10px; padding: 14px 28px; border-bottom: 1px solid var(--line); flex-wrap: wrap; font-size: 13px; }
+  .node { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 150px; background: var(--bg); transition: border-color 0.2s, box-shadow 0.2s; }
+  .node small { display: block; color: var(--muted); font-size: 11px; }
+  .node.lit { border-color: var(--fg); box-shadow: 0 0 0 1px var(--fg); }
+  .node.ok { border-color: var(--good); } .node.no { border-color: var(--bad); }
+  .arrow { color: var(--muted); }
+  .to { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  @keyframes in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .step, .pay { animation: none; } }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside, .right { border: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Scrip<span>agent payment trace</span></div>
+  <div class="controls">
+    <select id="mode"><option value="offline">Offline (pretend Natural)</option><option value="sandbox">Live — Natural sandbox</option></select>
+    <button id="run">Run agents</button>
+    <div id="status">Ready</div>
+  </div>
+</header>
+<div class="request">Request for every agent: <b>NYC → SF, Oct 16–18, direct only, refundable, under $600</b></div>
+<div class="flow">
+  <div class="node" id="n-agent">Agent<small id="n-agent-s">waiting</small></div><span class="arrow">→</span>
+  <div class="node" id="n-scrip">Scrip check<small id="n-scrip-s">does it match what you asked?</small></div><span class="arrow">→</span>
+  <div class="node" id="n-natural">Natural<small id="n-natural-s">holds the payment</small></div><span class="arrow">→</span>
+  <div class="node" id="n-merchant">Example Air<small id="n-merchant-s">merchant on Natural</small></div>
+</div>
+<main>
+  <aside>
+    <h2>Agents</h2>
+    <div id="agents"><div class="empty">Press “Run agents”.</div></div>
+  </aside>
+  <section>
+    <h2 id="timelineTitle">Activity</h2>
+    <div id="timeline"><div class="empty">Each step appears here as it happens: what the person asked, what the agent understood, what it chose, what it paid, and what the connector decided.</div></div>
+  </section>
+  <section class="right">
+    <h2>Natural</h2>
+    <div id="natural"><div class="empty">Payments and holds on Natural appear here and update live.</div></div>
+    <div class="note" id="railNote"></div>
+  </section>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const usd = c => '$' + (c / 100).toFixed(2);
+  const AGENTS = { faithful: 'Faithful', misreads: 'Misreads the goal', switches: 'Switches at payment' };
+  let steps = {}, payments = {}, outcomes = {}, selected = null, source = null;
+
+  fetch('/config').then(r => r.json()).then(c => {
+    $('mode').value = c.defaultMode;
+    if (!c.sandboxAvailable) { $('mode').querySelector('[value=sandbox]').disabled = true; }
+  }).catch(() => {});
+
+  function who(type) {
+    if (type === 'request_received' || type === 'requirements_confirmed') return 'person';
+    if (type === 'agent_interpretation_recorded' || type === 'candidate_checked' || type === 'payment_submitted') return 'agent';
+    if (type === 'payment_held' || type === 'payment_settled') return 'natural';
+    return 'scrip';
+  }
+  function tone(s) {
+    if (s.type === 'interpretation_compared') return s.data.differences.length ? 'warn' : 'good';
+    if (s.type === 'candidate_checked') return s.data.violations.length ? 'bad' : 'good';
+    if (s.type === 'purchase_refused') return 'bad';
+    if (s.type === 'purchase_approved') return 'good';
+    if (s.type === 'hold_decided') return s.data.decision === 'approved' ? 'good' : 'bad';
+    if (s.type === 'payment_settled') return s.data.status === 'COMPLETED' ? 'good' : 'bad';
+    return '';
+  }
+  function renderAgents() {
+    const names = Object.keys(steps);
+    $('agents').innerHTML = names.map(n => {
+      const o = outcomes[n];
+      const label = !o ? '<span class="chip">running…</span>'
+        : o === 'paid' ? '<span class="good">Paid — matched</span>'
+        : o === 'blocked_before_payment' ? '<span class="bad">Blocked before paying</span>'
+        : o === 'denied_at_payment' ? '<span class="bad">Denied at payment</span>'
+        : '<span class="warn">Undecided</span>';
+      return `<div class="agent ${n === selected ? 'active' : ''}" data-n="${n}"><div class="name">${esc(AGENTS[n] || n)}</div><div class="outcome">${label}</div></div>`;
+    }).join('') || '<div class="empty">Press “Run agents”.</div>';
+    document.querySelectorAll('.agent').forEach(el => el.onclick = () => { selected = el.dataset.n; renderAgents(); renderTimeline(); });
+  }
+  function renderTimeline() {
+    const list = steps[selected] || [];
+    $('timelineTitle').textContent = selected ? `Activity — ${AGENTS[selected] || selected}` : 'Activity';
+    $('timeline').innerHTML = list.map(s => `<div class="step"><div class="t">${esc(s.at.slice(11, 19))}</div>
+      <div><div class="who">${who(s.type)}</div><div class="${tone(s)}">${esc(s.line)}</div></div></div>`).join('') || '<div class="empty">Waiting…</div>';
+  }
+  function renderNatural() {
+    const rows = Object.values(payments);
+    $('natural').innerHTML = rows.map(p => `<div class="pay"><div class="top"><span class="amt">${usd(p.amount)}</span>
+      <span class="${p.tone}">${esc(p.status)}</span></div>
+      <div class="to">Agent → <b>Example Air</b> (merchant on Natural)</div>
+      <div class="ids">${esc(p.id)}${p.approval ? '<br>' + esc(p.approval) : ''}</div>
+      <div class="hist">${esc(AGENTS[p.scenario] || p.scenario)} · ${p.history.map(esc).join(' → ')}</div>
+      ${p.reason ? `<div class="reason bad">${esc(p.reason)}</div>` : ''}</div>`).join('')
+      || '<div class="empty">Payments and holds on Natural appear here and update live.</div>';
+  }
+  function setNode(id, text, cls) { const n = $('n-' + id); n.className = 'node ' + (cls || ''); $('n-' + id + '-s').textContent = text; }
+  function resetFlow() { setNode('agent', 'waiting'); setNode('scrip', 'does it match what you asked?'); setNode('natural', 'holds the payment'); setNode('merchant', 'merchant on Natural'); }
+  function flow(s) {
+    const d = s.data, name = AGENTS[s.scenario] || s.scenario;
+    if (s.type === 'request_received') { resetFlow(); setNode('agent', name + ': reading the request', 'lit'); }
+    if (s.type === 'interpretation_compared') setNode('scrip', d.differences.length ? 'agent misunderstood the goal' : 'agent understood the goal', d.differences.length ? 'no' : 'ok');
+    if (s.type === 'candidate_checked') setNode('agent', name + ': picked ' + d.offer.offerId, 'lit');
+    if (s.type === 'purchase_refused') { setNode('scrip', 'BLOCKED — never reaches Natural', 'no'); setNode('merchant', 'not paid', 'no'); }
+    if (s.type === 'purchase_approved') setNode('scrip', 'purchase approved', 'ok');
+    if (s.type === 'payment_submitted') { setNode('agent', name + ': paying ' + usd(d.amountCents), 'lit'); setNode('natural', 'received payment', 'lit'); }
+    if (s.type === 'payment_held') setNode('natural', 'HELD — waiting for Scrip', 'lit');
+    if (s.type === 'hold_decided') setNode('scrip', d.decision === 'approved' ? 'fingerprint matches → approve' : 'fingerprint mismatch → deny', d.decision === 'approved' ? 'ok' : 'no');
+    if (s.type === 'payment_settled') {
+      const paid = d.status === 'COMPLETED';
+      setNode('natural', paid ? 'released the money' : 'kept it held — denied', paid ? 'ok' : 'no');
+      setNode('merchant', paid ? 'PAID ' : 'not paid', paid ? 'ok' : 'no');
+    }
+  }
+  function track(s) {
+    const d = s.data;
+    if (s.type === 'payment_submitted') payments[d.paymentId] = { id: d.paymentId, amount: d.amountCents, scenario: s.scenario, status: 'Submitted', tone: '', history: ['submitted'] };
+    const p = d.paymentId && payments[d.paymentId];
+    if (!p) return;
+    if (s.type === 'payment_held') { p.approval = d.approvalId; p.status = 'In review (held)'; p.tone = 'warn'; p.history.push('held'); }
+    if (s.type === 'hold_decided') { p.status = d.decision === 'approved' ? 'Approved' : 'Denied'; p.tone = d.decision === 'approved' ? 'good' : 'bad'; p.history.push(d.decision); if (d.reasons.length) p.reason = d.reasons.join('; '); }
+    if (s.type === 'payment_settled') { p.status = d.status === 'COMPLETED' ? 'Completed' : d.status.startsWith('APPROVAL_DENIED') ? 'Approval denied' : d.status; p.tone = d.status === 'COMPLETED' ? 'good' : 'bad'; p.history.push(d.status === 'COMPLETED' ? 'completed' : 'not paid'); }
+  }
+
+  $('run').onclick = () => {
+    steps = {}; payments = {}; outcomes = {}; selected = null;
+    renderAgents(); renderTimeline(); renderNatural(); resetFlow(); $('railNote').textContent = '';
+    $('run').disabled = true; $('status').textContent = 'Running…';
+    source = new EventSource('/run?mode=' + $('mode').value);
+    source.addEventListener('step', e => {
+      const s = JSON.parse(e.data);
+      (steps[s.scenario] = steps[s.scenario] || []).push(s);
+      if (!selected || selected !== s.scenario && steps[selected] && outcomes[selected]) selected = s.scenario;
+      track(s); flow(s); renderAgents(); renderTimeline(); renderNatural();
+    });
+    source.addEventListener('log', e => { $('railNote').textContent += JSON.parse(e.data).line + ' '; });
+    source.addEventListener('done', e => {
+      for (const sc of JSON.parse(e.data).scenarios) outcomes[sc.name] = sc.outcome;
+      renderAgents(); $('status').textContent = 'Done'; $('run').disabled = false; source.close();
+    });
+    source.addEventListener('error', e => {
+      if (e.data) $('status').textContent = 'Error: ' + JSON.parse(e.data).message;
+      else if ($('status').textContent === 'Running…') $('status').textContent = 'Connection closed';
+      $('run').disabled = false; source.close();
+    });
+  };
+</script>
+</body>
+</html>

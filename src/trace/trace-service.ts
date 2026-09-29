@@ -28,6 +28,9 @@ export interface TraceDeps {
 }
 
 export class FlightTraceService {
+  /** Optional listener told about every event the moment it is recorded (used by the live page). */
+  onEvent?: (event: RecordedEvent) => void;
+
   constructor(private deps: TraceDeps) {}
 
   start(consumerId: string, words: string): string {
@@ -131,5 +134,8 @@ export class FlightTraceService {
     return hit?.data as Data<T> | undefined;
   }
 
-  private append(traceId: string, event: TraceEvent): void { this.deps.store.append(traceId, event, this.deps.now()); }
+  private append(traceId: string, event: TraceEvent): void {
+    const recorded = this.deps.store.append(traceId, event, this.deps.now());
+    this.onEvent?.(recorded);
+  }
 }

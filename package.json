@@ -9,7 +9,8 @@
     "test": "vitest run",
     "demo:protect": "tsx demo/protect.ts",
     "visuals:protect": "tsx visuals/protect-server.ts",
-    "demo:flight": "tsx demo/flight-trace.ts"
+    "demo:flight": "tsx demo/flight-trace.ts",
+    "ui": "tsx visuals/trace-server.ts"
   },
   "dependencies": {
     "@naturalpay/sdk": "^1.6.16",

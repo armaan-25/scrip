@@ -23,6 +23,7 @@ import { NaturalHoldConnector } from '../src/rails/natural-hold-connector.js';
 import { type AgentPayer, type NaturalPort, TERMINAL_STATUSES } from '../src/rails/natural-port.js';
 import { SdkAgentPayer, SdkNaturalPort } from '../src/rails/natural-sdk-port.js';
 import { orderFingerprint } from '../src/trace/fingerprint.js';
+import type { RecordedEvent } from '../src/trace/events.js';
 import { renderTimeline } from '../src/trace/timeline.js';
 import { SqliteTraceStore } from '../src/trace/trace-store.js';
 import { FlightTraceService } from '../src/trace/trace-service.js';
@@ -94,7 +95,14 @@ async function settle(
   return { outcome: observed === 'COMPLETED' ? 'paid' : 'denied_at_payment', finalStatus: observed };
 }
 
-export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; log?: (line?: string) => void } = {}): Promise<FlightDemoResult> {
+export interface FlightDemoOptions {
+  mode?: 'offline' | 'sandbox';
+  log?: (line?: string) => void;
+  /** Told about every recorded step as it happens, with the scenario it belongs to (drives the live page). */
+  onEvent?: (scenario: string, event: RecordedEvent) => void;
+}
+
+export async function runFlightTraceDemo(opts: FlightDemoOptions = {}): Promise<FlightDemoResult> {
   const mode = opts.mode ?? (process.env.SCRIP_RAIL === 'sandbox' ? 'sandbox' : 'offline');
   const log = opts.log ?? console.log;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scrip-flight-demo-'));
@@ -106,6 +114,8 @@ export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; l
   config.budgets.research.monthlyLimit = 100000;
   const ledger = new TaskAuthorizationManager(config, { getReportedSpend: async () => 0, reportTaskUsage: async () => {} });
   const service = new FlightTraceService({ store, registry, ledger, budget: 'research', now });
+  let currentScenario = '';
+  if (opts.onEvent) { const emit = opts.onEvent; service.onEvent = e => emit(currentScenario, e); }
 
   let restore: () => Promise<void> = async () => {};
   const restoreSafely = async () => {
@@ -161,6 +171,7 @@ export async function runFlightTraceDemo(opts: { mode?: 'offline' | 'sandbox'; l
     for (const scripted of AGENTS) {
       log();
       log(`── Agent: ${scripted.name} ──`);
+      currentScenario = scripted.name;
       const traceId = service.start('armaan', demoRequest);
       const requirementsDigest = service.confirm(traceId, confirmedRequirements);
       const mandate = registry.createMandate({
