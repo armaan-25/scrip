@@ -68,7 +68,8 @@ async function waitForTerminal(owner: NaturalPort, paymentId: string): Promise<s
 /**
  * Poll until the connector decides this payment's hold (new holds can take a
  * moment to appear in Natural's list), then record a final status only once
- * it is final. A denied hold is final even if the sandbox payment record lags.
+ * it is final. A denied hold is final even though the sandbox leaves the
+ * payment record at IN_REVIEW when the denial carries a reason.
  */
 async function settle(
   service: FlightTraceService, connector: NaturalHoldConnector, owner: NaturalPort,

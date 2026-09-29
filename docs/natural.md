@@ -59,7 +59,7 @@ The flight demo gates real sandbox payments using Natural's own controls:
 - Tags on payments and payment requests read back in full; holds report the paying agent and why they held.
 - Limits must be above zero, so the demo uses a 1-cent agent limit to hold every payment, and restores the previous limit afterwards.
 - Tags do not carry from a payment request to the payment that fulfils it; follow the payment's link to the request.
-- Status can lag the decision: a denied hold may show the payment as `IN_REVIEW` for a while.
+- Observed 2026-09-28: a hold denied **with a reason** shows `denied` on the approval, but the payment record stays `IN_REVIEW` (still true hours later). Denied **without** a reason, the payment moves to `APPROVAL_DENIED`. No money moves in either case. Likely a sandbox quirk worth reporting.
 
 Scrip's connector approves a held payment only if its `scrip_order_fp` tag equals
 the approved purchase's fingerprint, the amount is exact, and the paying agent is
