@@ -8,7 +8,8 @@
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "test": "vitest run",
     "demo:protect": "tsx demo/protect.ts",
-    "visuals:protect": "tsx visuals/protect-server.ts"
+    "visuals:protect": "tsx visuals/protect-server.ts",
+    "demo:flight": "tsx demo/flight-trace.ts"
   },
   "dependencies": {
     "@naturalpay/sdk": "^1.6.16",
