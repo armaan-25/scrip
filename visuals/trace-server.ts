@@ -96,12 +96,13 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', allo
       outcomeContractDigest: requirementsDigest, changePolicy: 'require_approval', approvedBy: 'armaan', approvedAt: now().toISOString(),
     });
     contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail });
-    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: profile.id, model: profile.model } });
+    const prompt = `Customer request: "${words}"`;
+    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: profile.id, model: profile.model, prompt } });
 
     const toolNames = new Map<string, string>();
     let final = { ok: false, turns: null as number | null, costUsd: null as number | null, summary: '' };
     const run = await runClaudeAgent({
-      prompt: `Customer request: "${words}"`, systemPrompt: profile.instructions, model: profile.model,
+      prompt, systemPrompt: profile.instructions, model: profile.model,
       mcpUrl: `http://localhost:${PORT}/mcp`, traceId, allowWeb,
       onActivity: a => {
         if (a.kind === 'tool_call' && !a.internal) { toolNames.set(a.toolUseId, a.tool); service.recordAgent(traceId, { type: 'agent_tool_call', data: { toolUseId: a.toolUseId, tool: a.tool, input: a.input } }); }
@@ -134,7 +135,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/config') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      defaultMode, sandboxAvailable: Boolean(process.env.NATURAL_SANDBOX_API_KEY && process.env.NATURAL_SANDBOX_AGENT_KEY),
+      defaultMode, requests: REQUESTS, confirmed: confirmedRequirements, sandboxAvailable: Boolean(process.env.NATURAL_SANDBOX_API_KEY && process.env.NATURAL_SANDBOX_AGENT_KEY),
       profiles: PROFILES.map(p => ({ id: p.id, label: p.label, model: p.model })),
     }));
     return;

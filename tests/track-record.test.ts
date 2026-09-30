@@ -4,7 +4,7 @@ import { trackRecords } from '../src/trace/track-record.js';
 
 let seq = 0;
 const ev = (traceId: string, e: TraceEvent): RecordedEvent => ({ ...e, traceId, seq: ++seq, at: '2026-09-29T12:00:00.000Z' }) as RecordedEvent;
-const started = (t: string, v: string, profile: string): RecordedEvent => ev(t, { type: 'agent_run_started', data: { agentVersionId: v, profile, model: 'sonnet' } });
+const started = (t: string, v: string, profile: string): RecordedEvent => ev(t, { type: 'agent_run_started', data: { agentVersionId: v, profile, model: 'sonnet', prompt: 'p' } });
 const diff = (t: string, fields: string[]): RecordedEvent => ev(t, { type: 'interpretation_compared', data: { differences: fields.map(f => ({ field: f as 'directOnly', confirmed: true, interpreted: false })) } });
 
 describe('trackRecords', () => {

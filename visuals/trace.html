@@ -16,152 +16,141 @@
     --warning: oklch(49.8% .098 55); --warning-bg: oklch(99% .013 55);
     --sans: "STK Miso", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
     --mono: "GT Standard Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 16px; --r-2xl: 24px;
+    --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 16px;
   }
   * { box-sizing: border-box; }
   html { -webkit-font-smoothing: antialiased; color-scheme: light; }
   body { margin: 0; background: var(--surface); color: var(--ink); font: 400 14px/20px var(--sans); letter-spacing: .005em; }
-  button, select { font: inherit; letter-spacing: inherit; }
+  button { font: inherit; letter-spacing: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  [hidden] { display: none !important; }
 
-  /* Top bar */
-  .bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--stroke); }
-  .brand { display: flex; align-items: baseline; gap: 10px; }
-  .brand strong { font-weight: 440; font-size: 15px; }
-  .brand span { color: var(--ink-2); font-size: 13px; }
-  .actions { display: flex; align-items: center; gap: 8px; }
-  select { appearance: none; background: var(--panel); color: var(--ink); border: 1px solid var(--stroke); border-radius: var(--r-md); padding: 7px 30px 7px 12px;
-           background-image: linear-gradient(45deg, transparent 50%, var(--ink-2) 50%), linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
-           background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
-  .primary { background: var(--ink); color: var(--surface); border: 0; border-radius: var(--r-md); padding: 8px 14px; font-weight: 440; cursor: pointer; }
-  .primary:hover { opacity: .86; }
-  .primary:disabled { opacity: .35; cursor: default; }
-  #status { color: var(--ink-2); font-size: 13px; min-width: 96px; text-align: right; }
+  .bar { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 24px; border-bottom: 1px solid var(--stroke); }
+  .bar strong { font-weight: 440; font-size: 15px; margin-right: 10px; }
+  .bar .sub, #status { color: var(--ink-2); font-size: 13px; }
 
-  /* Request + rail */
-  .top { padding: 20px 24px 8px; }
-  .request { background: var(--panel); border-radius: var(--r-xl); padding: 14px 18px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
-  .request .k { color: var(--ink-2); font-size: 13px; }
-  .request .v { font-weight: 440; }
-  .rail { display: grid; grid-template-columns: repeat(4, 1fr); margin: 22px 0 10px; position: relative; }
+  /* Setup: three choices and one button */
+  .setup { padding: 20px 24px 0; display: grid; gap: 14px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+  .choice { display: grid; gap: 6px; }
+  .choice > span { color: var(--ink-2); font-size: 13px; }
+  .seg { display: inline-flex; background: var(--panel); border-radius: var(--r-md); padding: 3px; }
+  .seg button { border: 0; background: none; padding: 6px 12px; border-radius: var(--r-sm); cursor: pointer; color: var(--ink-2); }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--stroke); }
+  .seg button:disabled { opacity: .4; cursor: default; }
+  .primary { background: var(--ink); color: var(--surface); border: 0; border-radius: var(--r-md); padding: 9px 18px; font-weight: 440; cursor: pointer; }
+  .primary:hover { opacity: .86; } .primary:disabled { opacity: .35; cursor: default; }
+  .link { border: 0; background: none; padding: 0 0 8px; color: var(--ink-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .link:disabled { opacity: .4; cursor: default; }
+  .brief { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .brief div { background: var(--panel); border-radius: var(--r-xl); padding: 12px 16px; }
+  .brief small { display: block; color: var(--ink-2); font-size: 12px; line-height: 16px; margin-bottom: 2px; }
+
+  /* Payment path */
+  .rail { display: grid; grid-template-columns: repeat(4, 1fr); margin: 24px 24px 12px; position: relative; }
   .rail::before { content: ""; position: absolute; left: 12.5%; right: 12.5%; top: 11px; height: 2px; background: var(--stroke); }
   .fill { position: absolute; left: 12.5%; top: 11px; height: 2px; width: 0; background: var(--ink); transition: width .5s ease, background .3s; }
   .fill.ok { background: var(--success); } .fill.no { background: var(--error); }
-  .stop { position: relative; text-align: center; padding: 0 8px; }
-  .dot { width: 24px; height: 24px; margin: 0 auto 10px; border-radius: 50%; background: var(--surface); border: 2px solid var(--stroke); position: relative; z-index: 1; transition: border-color .3s, background .3s; }
+  .stop { text-align: center; padding: 0 8px; }
+  .dot { width: 24px; height: 24px; margin: 0 auto 8px; border-radius: 50%; background: var(--surface); border: 2px solid var(--stroke); position: relative; z-index: 1; transition: border-color .3s, background .3s; }
   .stop.lit .dot { border-color: var(--ink); }
   .stop.ok .dot { border-color: var(--success); background: var(--success); }
   .stop.no .dot { border-color: var(--error); background: var(--error); }
   .stop .name { font-weight: 440; }
-  .stop small { display: block; color: var(--ink-2); font-size: 12px; line-height: 16px; margin-top: 2px; min-height: 32px; }
+  .stop small { display: block; color: var(--ink-2); font-size: 12px; line-height: 16px; margin-top: 2px; min-height: 16px; }
   .stop.ok small { color: var(--success); } .stop.no small { color: var(--error); }
 
-  /* Body */
-  main { display: grid; grid-template-columns: 240px minmax(0, 1fr) 360px; border-top: 1px solid var(--stroke); margin-top: 12px; min-height: calc(100vh - 290px); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; border-top: 1px solid var(--stroke); min-height: calc(100vh - 330px); }
   .col { padding: 20px 24px; }
-  .agents { border-right: 1px solid var(--stroke); }
-  .ledger { background: var(--linen); border-left: 1px solid var(--stroke); }
+  .side { background: var(--linen); border-left: 1px solid var(--stroke); }
   h2 { margin: 0 0 12px; font-size: 13px; line-height: 18px; font-weight: 440; color: var(--ink-2); }
-  .agent { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--ink); padding: 10px 12px; margin: 0 -12px 2px; border-radius: var(--r-md); cursor: pointer; }
-  .agent:hover { background: var(--hover); }
-  .agent.active { background: var(--panel); }
-  .agent .n { font-weight: 440; display: block; }
-  .tag { display: inline-block; margin-top: 4px; font-size: 12px; line-height: 16px; padding: 2px 8px; border-radius: var(--r-sm); background: var(--panel); color: var(--ink-2); }
-  .agent.active .tag { background: var(--surface); }
+  h2.gap { margin-top: 28px; }
+  .empty { color: var(--ink-2); font-size: 13px; line-height: 18px; max-width: 52ch; margin: 0; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tabs button { border: 0; background: none; padding: 6px 10px; border-radius: var(--r-md); cursor: pointer; }
+  .tabs button.active { background: var(--panel); }
+  .tag { display: inline-block; font-size: 12px; line-height: 16px; padding: 2px 8px; border-radius: var(--r-sm); background: var(--panel); color: var(--ink-2); }
   .tag.ok { background: var(--success-bg); color: var(--success); }
   .tag.no { background: var(--error-bg); color: var(--error); }
   .tag.warn { background: var(--warning-bg); color: var(--warning); }
+
+  /* What the person asked vs what the agent understood */
+  .compare { width: 100%; max-width: 640px; border-collapse: collapse; margin-bottom: 28px; }
+  .compare th { text-align: left; font-weight: 400; color: var(--ink-2); font-size: 12px; padding: 0 0 6px; }
+  .compare td { padding: 7px 12px 7px 0; border-top: 1px solid var(--stroke); }
+  .compare td:first-child { color: var(--ink-2); width: 28%; }
+  .compare tr.miss td:last-child { color: var(--error); }
+  .compare .pending { color: var(--ink-3); }
 
   .step { display: grid; grid-template-columns: 64px 64px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--stroke); }
   .step:last-child { border-bottom: 0; }
   .step .t { font: 12px/20px var(--mono); color: var(--ink-3); }
   .step .w { font-size: 12px; color: var(--ink-2); }
   .step .l.ok { color: var(--success); } .step .l.no { color: var(--error); } .step .l.warn { color: var(--warning); }
+  .step .l.said { color: var(--ink-2); }
   .step.new { animation: settle .35s ease-out; }
-  .empty { color: var(--ink-2); font-size: 13px; line-height: 18px; max-width: 46ch; }
+  .step details { margin-top: 4px; }
+  .step summary { cursor: pointer; color: var(--ink-2); font-size: 12px; line-height: 16px; }
+  .step pre { margin: 6px 0 0; padding: 10px 12px; background: var(--panel); border-radius: var(--r-md); color: var(--ink); font: 12px/18px var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
+  .step pre b { font-weight: 400; color: var(--ink-2); }
 
-  .pay { background: var(--surface); border-radius: var(--r-lg); padding: 14px; margin-bottom: 10px; }
-  .pay .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-  .pay .amt { font-weight: 440; font-size: 15px; }
-  .pay .to { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
-  .pay .ids { font: 12px/18px var(--mono); color: var(--ink-3); margin-top: 8px; word-break: break-all; }
-  .pay .hist { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-  .pay .hist span { font-size: 12px; line-height: 16px; padding: 2px 8px; border-radius: var(--r-sm); background: var(--panel); color: var(--ink-2); }
-  .pay .reason { margin-top: 10px; font-size: 12px; line-height: 16px; color: var(--error); }
-  .step details { margin-top: 6px; }
-  .step summary { cursor: pointer; color: var(--ink-2); font-size: 12px; line-height: 16px; list-style: none; }
-  .step summary::before { content: "+ "; } .step details[open] summary::before { content: "\2212 "; }
-  .step pre { margin: 6px 0 0; padding: 10px 12px; background: var(--panel); border-radius: var(--r-md); font: 12px/18px var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
-  .step.tool .w, .step.tool .l { color: var(--ink); }
-  .check { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; cursor: pointer; }
-  .check input { accent-color: var(--ink); margin: 0; }
-  [hidden] { display: none !important; }
-  .rec { background: var(--surface); border-radius: var(--r-lg); padding: 14px; margin-bottom: 10px; }
-  .rec .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-  .rec .v { font: 12px/18px var(--mono); color: var(--ink-3); }
-  .rec dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13px; line-height: 18px; }
-  .rec dt { color: var(--ink-2); } .rec dd { margin: 0; text-align: right; }
-  .ledger h2.sub { margin-top: 24px; }
-  .foot { margin-top: 16px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+  .card { background: var(--surface); border-radius: var(--r-lg); padding: 14px; margin-bottom: 10px; }
+  .card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .card .big { font-weight: 440; font-size: 15px; }
+  .card .muted { color: var(--ink-2); font-size: 13px; margin-top: 4px; }
+  .card .id { font: 12px/18px var(--mono); color: var(--ink-3); word-break: break-all; }
+  .card .reason { margin-top: 8px; font-size: 12px; line-height: 16px; color: var(--error); }
+  .foot { margin-top: 12px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
 
   @keyframes settle { from { background: var(--hover); } to { background: transparent; } }
   @media (prefers-reduced-motion: reduce) { .fill, .dot { transition: none; } .step.new { animation: none; } }
-  @media (max-width: 960px) {
-    main { grid-template-columns: 1fr; } .agents, .ledger { border: 0; }
+  @media (max-width: 900px) {
+    main, .brief { grid-template-columns: 1fr; } .side { border: 0; }
     .rail { grid-template-columns: repeat(2, 1fr); row-gap: 16px; } .rail::before, .fill { display: none; }
     .step { grid-template-columns: 56px minmax(0, 1fr); } .step .w { display: none; }
   }
 </style>
 </head>
 <body>
-<div class="bar">
-  <div class="brand"><strong>Scrip</strong><span>Agent activity</span></div>
-  <div class="actions">
-    <select id="mode" aria-label="Where payments run">
-      <option value="offline">Offline, simulated Natural</option>
-      <option value="sandbox">Natural sandbox</option>
-    </select>
-    <select id="kind" aria-label="What to run">
-      <option value="real">Real AI agent</option>
-      <option value="scripted">Three scripted agents</option>
-    </select>
-    <select id="profile" aria-label="Agent version"></select>
-    <select id="req" aria-label="What the person says">
-      <option value="precise">Precise request</option>
-      <option value="vague">Vague request</option>
-    </select>
-    <label class="check" id="webWrap"><input type="checkbox" id="web" /> Web search</label>
-    <button class="primary" id="run">Run</button>
-    <span id="status" role="status">Ready</span>
-  </div>
-</div>
+<div class="bar"><div><strong>Scrip</strong><span class="sub">Watch an AI agent try to buy a flight</span></div><span id="status" role="status">Ready</span></div>
 
-<div class="top">
-  <div class="request"><span class="k" id="reqK">The person asks</span><span class="v" id="reqV"></span></div>
-  <div class="rail" aria-label="Payment path">
-    <div class="fill" id="fill"></div>
-    <div class="stop" id="n-agent"><div class="dot"></div><div class="name">Agent</div><small id="n-agent-s">Waiting to run</small></div>
-    <div class="stop" id="n-scrip"><div class="dot"></div><div class="name">Scrip</div><small id="n-scrip-s">Checks the purchase against the request</small></div>
-    <div class="stop" id="n-natural"><div class="dot"></div><div class="name">Natural</div><small id="n-natural-s">Holds the payment until it's checked</small></div>
-    <div class="stop" id="n-merchant"><div class="dot"></div><div class="name">Example Air</div><small id="n-merchant-s">Merchant on Natural</small></div>
+<section class="setup">
+  <div class="choices">
+    <div class="choice"><span>Agent</span><div class="seg" id="profile"></div></div>
+    <div class="choice"><span>Request</span><div class="seg" id="req">
+      <button data-v="precise" aria-pressed="true">Precise</button><button data-v="vague" aria-pressed="false">Vague</button></div></div>
+    <div class="choice"><span>Payments</span><div class="seg" id="mode">
+      <button data-v="offline" aria-pressed="true">Simulated</button><button data-v="sandbox" aria-pressed="false">Natural sandbox</button></div></div>
+    <button class="primary" id="run">Run agent</button>
+    <button class="link" id="scripted">Or run the three scripted agents</button>
   </div>
+  <div class="brief">
+    <div><small id="toldK">The agent is told, word for word</small><span id="toldV"></span></div>
+    <div><small>Scrip checks against what the person confirmed (the agent never sees this)</small><span id="confirmedV"></span></div>
+  </div>
+</section>
+
+<div class="rail" aria-label="Payment path">
+  <div class="fill" id="fill"></div>
+  <div class="stop" id="n-agent"><div class="dot"></div><div class="name">Agent</div><small id="n-agent-s"></small></div>
+  <div class="stop" id="n-scrip"><div class="dot"></div><div class="name">Scrip</div><small id="n-scrip-s"></small></div>
+  <div class="stop" id="n-natural"><div class="dot"></div><div class="name">Natural</div><small id="n-natural-s"></small></div>
+  <div class="stop" id="n-merchant"><div class="dot"></div><div class="name">Example Air</div><small id="n-merchant-s"></small></div>
 </div>
 
 <main>
-  <div class="col agents">
-    <h2>Agents</h2>
-    <div id="agents"><p class="empty">Run the agents to see how each one handles the request.</p></div>
-  </div>
   <div class="col">
-    <h2 id="timelineTitle">Activity</h2>
-    <div id="timeline"><p class="empty">Each step appears as it happens: what the person asked, what the agent understood, what it picked, what it paid, and whether the payment was released.</p></div>
+    <div class="tabs" id="tabs" hidden></div>
+    <div id="compareWrap" hidden><h2>What the person asked vs what the agent understood</h2><table class="compare" id="compare"></table></div>
+    <h2>What happened</h2>
+    <div id="timeline"><p class="empty">Press Run agent. Each thing the agent does shows up here as it happens.</p></div>
   </div>
-  <div class="col ledger">
-    <h2>On Natural</h2>
-    <div id="natural"><p class="empty">Payments and holds on Natural show up here and update live.</p></div>
+  <div class="col side">
+    <h2>Payments on Natural</h2>
+    <div id="natural"><p class="empty">No payments yet.</p></div>
     <p class="foot" id="railNote"></p>
-    <h2 class="sub">Track record by agent version</h2>
-    <div id="records"><p class="empty">After a real agent runs, each version's record builds up here: how often it understood the request, what it misread, and how its payments ended.</p></div>
+    <h2 class="gap">Track record by agent version</h2>
+    <div id="records"><p class="empty">Builds up as you run agents: how often each version understood the request and how its purchases ended.</p></div>
   </div>
 </main>
 
@@ -170,179 +159,188 @@
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const usd = c => '$' + (c / 100).toFixed(2);
   const clock = at => new Date(at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false });
-  const AGENTS = { faithful: 'Faithful agent', misreads: 'Misreads the request', switches: 'Switches flights at payment' };
-  const REQUESTS = {
-    precise: 'Book NYC to SF, Oct 16 to 18. Direct only, refundable, under $600.',
-    vague: 'Get me the cheapest flight from NYC to SF, out Friday Oct 16, back Sunday Oct 18.',
-    confirmed: 'JFK to SFO, Oct 16 to 18, direct only, refundable, under $600.',
+  const FIELDS = { from: 'From', to: 'To', departOn: 'Leave', returnOn: 'Return', directOnly: 'Direct only', refundableOnly: 'Refundable', maxTotalCents: 'Budget' };
+  const fmt = (f, v) => f === 'maxTotalCents' ? 'up to ' + usd(v) : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v);
+  const flight = id => String(id || '').replace('offer-', '') + ' flight';
+  const NAMES = { faithful: 'Faithful agent', misreads: 'Misreads the request', switches: 'Switches flights at payment' };
+  const SCRIPTED_REQUEST = 'Book NYC to SF, Oct 16 to 18. Direct only, refundable, under $600.';
+  let cfg = { requests: {}, confirmed: null, profiles: [] };
+  let steps = {}, payments = {}, outcomes = {}, selected = null, seen = 0, approvedFp = null, source = null;
+
+  /* Segmented controls: one pressed button per group */
+  const value = id => $(id).querySelector('[aria-pressed="true"]')?.dataset.v;
+  function setSeg(id, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
+  for (const id of ['profile', 'req', 'mode']) $(id).onclick = e => {
+    const b = e.target.closest('button');
+    if (b && !b.disabled) { setSeg(id, b.dataset.v); brief(); }
   };
-  const FIELDS = { from: 'From', to: 'To', departOn: 'Depart date', returnOn: 'Return date', directOnly: 'Direct only', refundableOnly: 'Refundable', maxTotalCents: 'Budget' };
-  const STOPS = ['agent', 'scrip', 'natural', 'merchant'];
-  let steps = {}, payments = {}, outcomes = {}, selected = null, source = null, seen = 0, approvedFp = null;
 
-  const auto = new URLSearchParams(location.search).get('run');
-  fetch('/config').then(r => r.json()).then(c => {
-    if (!auto) $('mode').value = c.defaultMode;
-    if (!c.sandboxAvailable) $('mode').querySelector('[value=sandbox]').disabled = true;
-    $('profile').innerHTML = (c.profiles || []).map(p => `<option value="${esc(p.id)}">${esc(p.label)} (${esc(p.model)})</option>`).join('');
-    for (const p of c.profiles || []) AGENTS['real:' + p.id] = p.label;
-  }).catch(() => {});
-
-  function syncControls() {
-    const real = $('kind').value === 'real';
-    for (const id of ['profile', 'req', 'webWrap']) $(id).hidden = !real;
-    $('reqK').textContent = real ? 'The person asks' : 'Every agent gets the same request';
-    $('reqV').textContent = real ? REQUESTS[$('req').value] + '  Confirmed as: ' + REQUESTS.confirmed : REQUESTS.precise;
+  function brief() {
+    $('toldK').textContent = 'The agent is told, word for word';
+    $('toldV').textContent = '"Customer request: ' + (cfg.requests[value('req')] || '') + '"';
+    const c = cfg.confirmed;
+    $('confirmedV').textContent = c ? `${c.from} to ${c.to}, ${c.departOn.slice(5)} to ${c.returnOn.slice(5)}, ${c.directOnly ? 'direct only' : 'stops ok'}, ${c.refundableOnly ? 'refundable' : 'any fare'}, up to ${usd(c.maxTotalCents)}` : '';
   }
-  $('kind').onchange = syncControls; $('req').onchange = syncControls; syncControls();
 
-  function renderRecords(list) {
-    if (!list.length) return;
-    const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : 'n/a';
-    $('records').innerHTML = list.map(r => {
-      const misread = Object.entries(r.misread).map(([f, n]) => `${FIELDS[f] || f} ${n}x`).join(', ') || 'Nothing';
-      return `<div class="rec"><div class="row"><strong>${esc(AGENTS['real:' + r.profile] || r.profile)}</strong><span class="v">${esc(r.versionId.slice(0, 8))}</span></div>
-        <dl><dt>Runs</dt><dd>${r.runs}</dd>
-        <dt>Understood the request</dt><dd>${r.understoodCorrectly} of ${r.stated} (${pct(r.understoodCorrectly, r.stated)})</dd>
-        <dt>Misread</dt><dd>${esc(misread)}</dd>
-        <dt>Paid, matched</dt><dd>${r.paid}</dd>
-        <dt>Purchases blocked</dt><dd>${r.blockedBeforePayment}</dd>
-        <dt>Payment denied</dt><dd>${r.deniedAtPayment}</dd>
-        <dt>Tool calls</dt><dd>${r.toolCalls}</dd>
-        <dt>Model cost</dt><dd>$${r.costUsd.toFixed(3)}</dd></dl></div>`;
-    }).join('');
-  }
-  const loadRecords = () => fetch('/track-record').then(r => r.json()).then(renderRecords).catch(() => {});
-  loadRecords();
-
-  const who = t => ({ request_received: 'Person', requirements_confirmed: 'Person', agent_interpretation_recorded: 'Agent',
-    candidate_checked: 'Agent', payment_submitted: 'Agent', payment_held: 'Natural', payment_settled: 'Natural',
-    agent_run_started: 'Agent', agent_tool_call: 'Agent', agent_tool_result: 'Tool', agent_message: 'Agent', agent_run_finished: 'Agent' }[t] || 'Scrip');
+  /* Plain-English timeline. Tool results fold into their call; bookkeeping events are hidden. */
+  const who = t => ({ agent_run_started: 'Agent', agent_tool_call: 'Agent', agent_message: 'Agent', agent_run_finished: 'Agent', payment_submitted: 'Agent',
+    payment_held: 'Natural', payment_settled: 'Natural' }[t] || 'Scrip');
+  const HIDDEN = new Set(['request_received', 'requirements_confirmed', 'agent_interpretation_recorded', 'hold_decision_started', 'agent_tool_result']);
   const pretty = v => { try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); } catch { return String(v); } };
-  function line(s) {
+  function toolLine(d) {
+    const i = d.input || {};
+    return { search_flights: 'Searched for flights', state_understanding: 'Wrote down what it thinks the person wants',
+      request_purchase: 'Asked Scrip to buy the ' + flight(i.offerId), pay: 'Paid for the ' + flight(i.offerId) }[d.tool] || 'Used ' + d.tool;
+  }
+  // Returns [tone, text, isHtml].
+  function describe(s, list) {
     const d = s.data;
-    if (s.type === 'agent_tool_call') return `Called <strong>${esc(d.tool)}</strong><details><summary>Input</summary><pre>${esc(pretty(d.input))}</pre></details>`;
-    if (s.type === 'agent_tool_result') return `${d.isError ? 'Error from' : 'Result from'} ${esc(d.tool)}<details><summary>Output</summary><pre>${esc(pretty(d.output))}</pre></details>`;
-    if (s.type === 'agent_message') return 'Said: ' + esc(d.text);
-    return esc(s.line);
-  }
-  function tone(s) {
-    const d = s.data;
-    if (s.type === 'interpretation_compared') return d.differences.length ? 'warn' : 'ok';
-    if (s.type === 'candidate_checked') return d.violations.length ? 'no' : 'ok';
-    if (s.type === 'purchase_refused') return 'no';
-    if (s.type === 'purchase_approved') return 'ok';
-    if (s.type === 'hold_decided') return d.decision === 'approved' ? 'ok' : 'no';
-    if (s.type === 'payment_settled') return d.status === 'COMPLETED' ? 'ok' : 'no';
-    if (s.type === 'agent_tool_result' && d.isError) return 'no';
-    return '';
-  }
-  function outcomeTag(o) {
-    if (!o) return '<span class="tag">Running</span>';
-    if (o === 'paid') return '<span class="tag ok">Paid, matched the request</span>';
-    if (o === 'blocked_before_payment') return '<span class="tag no">Blocked before paying</span>';
-    if (o === 'denied_at_payment') return '<span class="tag no">Payment denied</span>';
-    return '<span class="tag warn">Not decided yet</span>';
-  }
-  function renderAgents() {
-    const names = Object.keys(steps);
-    $('agents').innerHTML = names.map(n => `<button class="agent ${n === selected ? 'active' : ''}" data-n="${n}">
-      <span class="n">${esc(AGENTS[n] || n)}</span>${outcomeTag(outcomes[n])}</button>`).join('')
-      || '<p class="empty">Run the agents to see how each one handles the request.</p>';
-    document.querySelectorAll('.agent').forEach(el => el.onclick = () => { selected = el.dataset.n; seen = Infinity; renderAgents(); renderTimeline(); });
+    switch (s.type) {
+      case 'agent_run_started': return ['', `Started (version ${d.agentVersionId.slice(0, 8)}, model ${d.model})`];
+      case 'agent_tool_call': {
+        const r = list.find(x => x.type === 'agent_tool_result' && x.data.toolUseId === d.toolUseId);
+        const body = `<b>Sent</b>\n${esc(pretty(d.input))}` + (r ? `\n\n<b>${r.data.isError ? 'Error' : 'Got back'}</b>\n${esc(pretty(r.data.output))}` : '');
+        return [r?.data.isError ? 'no' : '', `${esc(toolLine(d))}<details><summary>Details</summary><pre>${body}</pre></details>`, true];
+      }
+      case 'agent_message': return ['said', '"' + d.text + '"'];
+      case 'agent_run_finished': return ['', `Finished${d.turns !== null ? ` after ${d.turns} turns` : ''}${d.costUsd !== null ? `, $${d.costUsd.toFixed(3)} of model use` : ''}`];
+      case 'interpretation_compared': return d.differences.length
+        ? ['warn', 'Agent got this wrong: ' + d.differences.map(x => FIELDS[x.field] || x.field).join(', ')]
+        : ['ok', 'Agent understood everything the person asked'];
+      case 'candidate_checked': return d.violations.length
+        ? ['no', `The ${flight(d.offer.offerId)} (${usd(d.offer.totalCents)}) breaks the request: ` + d.violations.map(v => FIELDS[v.rule] || v.rule).join(', ')]
+        : ['ok', `The ${flight(d.offer.offerId)} (${usd(d.offer.totalCents)}) fits the request`];
+      case 'purchase_refused': return ['no', 'Blocked. No money moved.'];
+      case 'purchase_approved': return ['ok', `Approved the ${flight(d.offer.offerId)} for ${usd(d.totalCents)}`];
+      case 'payment_submitted': return !approvedFp || d.fingerprintTag === approvedFp
+        ? ['', `Sent ${usd(d.amountCents)} through Natural`] : ['no', `Sent ${usd(d.amountCents)} through Natural, but for a different flight than approved`];
+      case 'payment_held': return ['', 'Holding the payment until Scrip checks it'];
+      case 'hold_decided': return d.decision === 'approved'
+        ? ['ok', 'Payment is for the approved flight. Released.'] : ['no', 'Payment is not for the approved flight. Denied: ' + d.reasons.join('; ')];
+      case 'payment_settled': return d.status === 'COMPLETED' ? ['ok', 'Money arrived at Example Air'] : ['no', `Money never moved (${d.status})`];
+      default: return ['', s.line];
+    }
   }
   function renderTimeline() {
     const list = steps[selected] || [];
-    $('timelineTitle').textContent = selected ? AGENTS[selected] || selected : 'Activity';
-    $('timeline').innerHTML = list.map((s, i) => `<div class="step ${i >= seen ? 'new' : ''} ${s.type.startsWith('agent_tool') ? 'tool' : ''}"><span class="t">${esc(clock(s.at))}</span>
-      <span class="w">${who(s.type)}</span><span class="l ${tone(s)}">${line(s)}</span></div>`).join('') || '<p class="empty">Waiting for the first step.</p>';
+    const rows = list.map((s, i) => ({ s, i })).filter(({ s }) => !HIDDEN.has(s.type));
+    $('timeline').innerHTML = rows.map(({ s, i }) => {
+      const [tone, text, isHtml] = describe(s, list);
+      return `<div class="step ${i >= seen ? 'new' : ''}"><span class="t">${esc(clock(s.at))}</span><span class="w">${who(s.type)}</span>
+        <span class="l ${tone}">${isHtml ? text : esc(text)}</span></div>`;
+    }).join('') || '<p class="empty">Waiting for the agent.</p>';
     seen = list.length;
+    renderCompare(list);
   }
-  function renderNatural() {
-    const rows = Object.values(payments);
-    $('natural').innerHTML = rows.map(p => `<div class="pay"><div class="row"><span class="amt">${usd(p.amount)}</span>
-      <span class="tag ${p.tone}">${esc(p.status)}</span></div>
-      <div class="to">${esc(AGENTS[p.scenario] || p.scenario)} paying Example Air</div>
-      <div class="hist">${p.history.map(h => `<span>${esc(h)}</span>`).join('')}</div>
-      ${p.reason ? `<div class="reason">${esc(p.reason)}</div>` : ''}
-      <div class="ids">${esc(p.id)}${p.approval ? '<br>' + esc(p.approval) : ''}</div></div>`).join('')
-      || '<p class="empty">Payments and holds on Natural show up here and update live.</p>';
+  function renderCompare(list) {
+    const conf = list.find(s => s.type === 'requirements_confirmed');
+    const said = list.filter(s => s.type === 'agent_interpretation_recorded');
+    $('compareWrap').hidden = !conf;
+    if (!conf) return;
+    const c = conf.data.requirements, a = said.at(-1)?.data.interpretation;
+    $('compare').innerHTML = `<tr><th></th><th>Person asked</th><th>Agent understood${said.length > 1 ? ` (latest of ${said.length} tries)` : ''}</th></tr>` +
+      Object.keys(FIELDS).map(f => `<tr class="${a && a[f] !== c[f] ? 'miss' : ''}"><td>${FIELDS[f]}</td><td>${esc(fmt(f, c[f]))}</td>
+        <td>${a ? esc(fmt(f, a[f])) : '<span class="pending">not yet</span>'}</td></tr>`).join('');
   }
 
+  function outcomeTag(o) {
+    return !o ? '<span class="tag">Running</span>' : o === 'paid' ? '<span class="tag ok">Paid</span>'
+      : o === 'blocked_before_payment' ? '<span class="tag no">Blocked</span>' : o === 'denied_at_payment' ? '<span class="tag no">Denied</span>' : '<span class="tag warn">Undecided</span>';
+  }
+  function renderTabs() {
+    const names = Object.keys(steps);
+    $('tabs').hidden = names.length < 2;
+    $('tabs').innerHTML = names.map(n => `<button class="${n === selected ? 'active' : ''}" data-n="${n}">${esc(NAMES[n] || n)} ${outcomeTag(outcomes[n])}</button>`).join('');
+    $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { selected = b.dataset.n; seen = Infinity; renderTabs(); renderTimeline(); });
+  }
+  function renderNatural() {
+    $('natural').innerHTML = Object.values(payments).map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amount)}</span><span class="tag ${p.tone}">${esc(p.status)}</span></div>
+      <div class="muted">${esc(NAMES[p.scenario] || p.scenario)} paying Example Air</div>
+      ${p.reason ? `<div class="reason">${esc(p.reason)}</div>` : ''}<div class="id" style="margin-top:8px">${esc(p.id)}</div></div>`).join('') || '<p class="empty">No payments yet.</p>';
+  }
+  function renderRecords(list) {
+    if (!list.length) return;
+    $('records').innerHTML = list.map(r => {
+      const misread = Object.entries(r.misread).sort((a, b) => b[1] - a[1]).map(([f, n]) => `${FIELDS[f] || f} (${n})`).join(', ');
+      return `<div class="card"><div class="row"><strong>${esc(NAMES['real:' + r.profile] || r.profile)}</strong><span class="id">${esc(r.versionId.slice(0, 8))}</span></div>
+        <div class="big" style="margin-top:8px">Understood ${r.understoodCorrectly} of ${r.stated} times</div>
+        ${misread ? `<div class="muted">Got wrong: ${esc(misread)}</div>` : ''}
+        <div class="muted">${r.paid} paid, ${r.blockedBeforePayment} blocked, ${r.deniedAtPayment} denied</div>
+        <div class="muted">${r.runs} run${r.runs === 1 ? '' : 's'}, $${r.costUsd.toFixed(2)} of model use</div></div>`;
+    }).join('');
+  }
+  const loadRecords = () => fetch('/track-record').then(r => r.json()).then(renderRecords).catch(() => {});
+
+  /* Payment path */
   function setStop(id, text, cls) { $('n-' + id).className = 'stop ' + (cls || ''); $('n-' + id + '-s').textContent = text; }
-  function progress(i, cls) { const f = $('fill'); f.style.width = (i * 25) + '%'; f.className = 'fill ' + (cls || ''); }
+  function progress(i, cls) { $('fill').style.width = (i * 25) + '%'; $('fill').className = 'fill ' + (cls || ''); }
   function resetRail() {
-    setStop('agent', 'Waiting to run'); setStop('scrip', 'Checks the purchase against the request');
-    setStop('natural', "Holds the payment until it's checked"); setStop('merchant', 'Merchant on Natural'); progress(0);
+    setStop('agent', 'Waiting'); setStop('scrip', 'Checks the purchase'); setStop('natural', 'Holds the payment'); setStop('merchant', 'Gets paid'); progress(0);
   }
   function rail(s) {
     const d = s.data;
     if (s.type === 'request_received') { resetRail(); approvedFp = null; setStop('agent', 'Reading the request', 'lit'); }
-    if (s.type === 'interpretation_compared') setStop('agent', d.differences.length ? 'Misread part of the request' : 'Understood the request', d.differences.length ? 'no' : 'lit');
-    if (s.type === 'candidate_checked') setStop('agent', 'Picked ' + d.offer.offerId.replace('offer-', '') + ' flight', 'lit');
-    if (s.type === 'purchase_refused') { setStop('scrip', 'Blocked: flight breaks the request', 'no'); setStop('natural', 'Never received a payment'); setStop('merchant', 'Not paid'); progress(1, 'no'); }
-    if (s.type === 'purchase_approved') { approvedFp = d.fingerprint; setStop('agent', 'Approved to buy', 'ok'); setStop('scrip', 'Purchase approved', 'ok'); progress(1, 'ok'); }
-    if (s.type === 'payment_submitted') {
-      const matches = d.fingerprintTag === approvedFp;
-      setStop('agent', matches ? 'Paying ' + usd(d.amountCents) + ' for the approved flight' : 'Paying ' + usd(d.amountCents) + ' for a different flight', matches ? 'ok' : 'no');
-      setStop('natural', 'Payment received', 'lit'); progress(2);
-    }
-    if (s.type === 'payment_held') setStop('natural', 'Holding it for Scrip', 'lit');
-    if (s.type === 'hold_decided') {
-      const ok = d.decision === 'approved';
-      setStop('scrip', ok ? 'Payment matches, released' : 'Payment does not match, denied', ok ? 'ok' : 'no');
-      progress(2, ok ? 'ok' : 'no');
-    }
-    if (s.type === 'payment_settled') {
-      const paid = d.status === 'COMPLETED';
-      setStop('natural', paid ? 'Released the money' : 'Kept it on hold', paid ? 'ok' : 'no');
-      setStop('merchant', paid ? 'Paid' : 'Not paid', paid ? 'ok' : 'no');
-      progress(paid ? 3 : 2, paid ? 'ok' : 'no');
-    }
+    if (s.type === 'interpretation_compared') setStop('agent', d.differences.length ? 'Misread the request' : 'Understood the request', d.differences.length ? 'no' : 'lit');
+    if (s.type === 'purchase_refused') { setStop('scrip', 'Blocked the purchase', 'no'); progress(1, 'no'); }
+    if (s.type === 'purchase_approved') { approvedFp = d.fingerprint; setStop('agent', 'Approved to buy', 'ok'); setStop('scrip', 'Approved the purchase', 'ok'); progress(1, 'ok'); }
+    if (s.type === 'payment_submitted') { const m = d.fingerprintTag === approvedFp; setStop('agent', m ? 'Paying' : 'Paying for the wrong flight', m ? 'ok' : 'no'); setStop('natural', 'Got the payment', 'lit'); progress(2); }
+    if (s.type === 'payment_held') setStop('natural', 'Holding it', 'lit');
+    if (s.type === 'hold_decided') { const ok = d.decision === 'approved'; setStop('scrip', ok ? 'Released the payment' : 'Denied the payment', ok ? 'ok' : 'no'); progress(2, ok ? 'ok' : 'no'); }
+    if (s.type === 'payment_settled') { const paid = d.status === 'COMPLETED'; setStop('natural', paid ? 'Sent the money' : 'Kept it held', paid ? 'ok' : 'no'); setStop('merchant', paid ? 'Paid' : 'Not paid', paid ? 'ok' : 'no'); progress(paid ? 3 : 2, paid ? 'ok' : 'no'); }
   }
   function track(s) {
     const d = s.data;
-    if (s.type === 'payment_submitted') payments[d.paymentId] = { id: d.paymentId, amount: d.amountCents, scenario: s.scenario, status: 'Submitted', tone: '', history: ['Submitted'] };
+    if (s.type === 'payment_submitted') payments[d.paymentId] = { id: d.paymentId, amount: d.amountCents, scenario: s.scenario, status: 'Sent', tone: '' };
     const p = d.paymentId && payments[d.paymentId];
     if (!p) return;
-    if (s.type === 'payment_held') { p.approval = d.approvalId; p.status = 'In review'; p.tone = 'warn'; p.history.push('Held'); }
-    if (s.type === 'hold_decided') { const ok = d.decision === 'approved'; p.status = ok ? 'Approved' : 'Denied'; p.tone = ok ? 'ok' : 'no'; p.history.push(ok ? 'Approved by Scrip' : 'Denied by Scrip'); if (d.reasons.length) p.reason = d.reasons.join('; '); }
-    if (s.type === 'payment_settled') { const paid = d.status === 'COMPLETED'; p.status = paid ? 'Completed' : 'Not paid'; p.tone = paid ? 'ok' : 'no'; p.history.push(paid ? 'Completed' : 'Stayed on hold'); }
+    if (s.type === 'payment_held') { p.status = 'Held'; p.tone = 'warn'; }
+    if (s.type === 'hold_decided') { const ok = d.decision === 'approved'; p.status = ok ? 'Released' : 'Denied'; p.tone = ok ? 'ok' : 'no'; if (!ok) p.reason = d.reasons.join('; '); }
+    if (s.type === 'payment_settled') { const paid = d.status === 'COMPLETED'; p.status = paid ? 'Completed' : 'Not paid'; p.tone = paid ? 'ok' : 'no'; }
   }
 
-  function start() {
+  function start(scripted) {
     steps = {}; payments = {}; outcomes = {}; selected = null; seen = 0;
-    renderAgents(); renderTimeline(); renderNatural(); resetRail(); $('railNote').textContent = '';
-    $('run').disabled = true; $('status').textContent = 'Running';
-    const mode = encodeURIComponent($('mode').value);
-    source = new EventSource($('kind').value === 'real'
-      ? `/run-agent?mode=${mode}&profile=${encodeURIComponent($('profile').value)}&request=${encodeURIComponent($('req').value)}${$('web').checked ? '&web=1' : ''}`
-      : '/run?mode=' + mode);
+    renderTabs(); renderTimeline(); renderNatural(); resetRail(); $('railNote').textContent = '';
+    $('run').disabled = $('scripted').disabled = true; $('status').textContent = 'Running';
+    if (scripted) { $('toldK').textContent = 'Every scripted agent gets'; $('toldV').textContent = '"' + SCRIPTED_REQUEST + '"'; } else brief();
+    const mode = value('mode');
+    source = new EventSource(scripted ? '/run?mode=' + mode : `/run-agent?mode=${mode}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}`);
     source.addEventListener('step', e => {
       const s = JSON.parse(e.data);
       if (s.scenario !== selected) { selected = s.scenario; seen = 0; }
       (steps[s.scenario] = steps[s.scenario] || []).push(s);
-      track(s); rail(s); renderAgents(); renderTimeline(); renderNatural();
+      track(s); rail(s); renderTabs(); renderTimeline(); renderNatural();
     });
     source.addEventListener('log', e => { $('railNote').textContent += JSON.parse(e.data).line + ' '; });
     source.addEventListener('done', e => {
       for (const sc of JSON.parse(e.data).scenarios) outcomes[sc.name] = sc.outcome;
-      renderAgents(); $('status').textContent = 'Done'; $('run').disabled = false; source.close(); loadRecords();
+      renderTabs(); $('status').textContent = 'Done'; finish(); loadRecords();
     });
     source.addEventListener('error', e => {
       if (e.data) $('status').textContent = 'Stopped: ' + JSON.parse(e.data).message;
       else if ($('status').textContent === 'Running') $('status').textContent = 'Connection closed';
-      $('run').disabled = false; source.close();
+      finish();
     });
   }
-  $('run').onclick = start;
-  // ?run=offline or ?run=sandbox starts a run on load (handy for demos and screenshots).
-  // ?agent=careful&req=vague runs the real agent on load once profiles are known.
-  const autoAgent = new URLSearchParams(location.search).get('agent');
-  if (auto === 'offline' || auto === 'sandbox') { $('mode').value = auto; $('kind').value = 'scripted'; syncControls(); start(); }
-  else if (autoAgent) fetch('/config').then(() => setTimeout(() => {
-    $('profile').value = autoAgent; $('req').value = new URLSearchParams(location.search).get('req') || 'precise'; syncControls(); start();
-  }, 300));
+  function finish() { $('run').disabled = $('scripted').disabled = false; source.close(); }
+  $('run').onclick = () => start(false);
+  $('scripted').onclick = () => start(true);
+
+  // ?run=offline|sandbox runs the scripted agents on load; ?agent=careful&req=vague runs a real one.
+  const q = new URLSearchParams(location.search);
+  resetRail(); loadRecords();
+  fetch('/config').then(r => r.json()).then(c => {
+    cfg = c;
+    $('profile').innerHTML = c.profiles.map((p, i) => `<button data-v="${esc(p.id)}" aria-pressed="${i === 0}">${esc(p.label)}</button>`).join('');
+    for (const p of c.profiles) NAMES['real:' + p.id] = p.label;
+    if (!c.sandboxAvailable) $('mode').querySelector('[data-v=sandbox]').disabled = true;
+    setSeg('mode', q.get('run') || c.defaultMode);
+    if (q.get('req')) setSeg('req', q.get('req'));
+    if (q.get('agent')) setSeg('profile', q.get('agent'));
+    brief();
+    if (q.get('run') === 'offline' || q.get('run') === 'sandbox') start(true);
+    else if (q.get('agent')) start(false);
+  }).catch(() => { $('status').textContent = 'Could not reach the server'; });
 </script>
 </body>
 </html>
