@@ -77,6 +77,7 @@ export class FlightTraceService {
 
   /** What a real agent did: runs, tool calls and results, messages. */
   recordAgent(traceId: string, event: AgentTraceEvent): void { this.append(traceId, event); }
+  recordSourceCheck(traceId: string, data: Data<'source_checked'>): void { this.append(traceId, { type: 'source_checked', data }); }
   recordPaymentSubmitted(traceId: string, data: Data<'payment_submitted'>): void { this.append(traceId, { type: 'payment_submitted', data }); }
   recordHold(traceId: string, data: Data<'payment_held'>): void { this.append(traceId, { type: 'payment_held', data }); }
   recordDecision(traceId: string, data: Data<'hold_decided'>): void { this.append(traceId, { type: 'hold_decided', data }); }

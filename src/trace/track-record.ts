@@ -17,6 +17,9 @@ export interface VersionRecord {
   blockedBeforePayment: number;
   deniedAtPayment: number;
   toolCalls: number;
+  /** Web flights whose cited page Scrip opened, and how many showed the claimed price and flights. */
+  sourceChecks: number;
+  sourceBacked: number;
   costUsd: number;
 }
 
@@ -28,7 +31,7 @@ export function trackRecords(traces: RecordedEvent[][]): VersionRecord[] {
     const versionId = start?.type === 'agent_run_started' ? start.data.agentVersionId : interp?.type === 'agent_interpretation_recorded' ? interp.data.agentVersionId : undefined;
     if (!versionId) continue;
     const profile = start?.type === 'agent_run_started' ? start.data.profile : 'scripted';
-    const r = byVersion.get(versionId) ?? { versionId, profile, runs: 0, stated: 0, understoodCorrectly: 0, misread: {}, paid: 0, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 0, costUsd: 0 };
+    const r = byVersion.get(versionId) ?? { versionId, profile, runs: 0, stated: 0, understoodCorrectly: 0, misread: {}, paid: 0, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 0, sourceChecks: 0, sourceBacked: 0, costUsd: 0 };
     r.runs += 1;
     for (const e of events) {
       if (e.type === 'interpretation_compared') {
@@ -38,6 +41,7 @@ export function trackRecords(traces: RecordedEvent[][]): VersionRecord[] {
       }
       if (e.type === 'agent_tool_call') r.toolCalls += 1;
       if (e.type === 'purchase_refused') r.blockedBeforePayment += 1;
+      if (e.type === 'source_checked' && e.data.status !== 'unreadable') { r.sourceChecks += 1; if (e.data.status === 'backed') r.sourceBacked += 1; }
       if (e.type === 'agent_run_finished' && e.data.costUsd !== null) r.costUsd = Math.round((r.costUsd + e.data.costUsd) * 1000) / 1000;
     }
     if (events.some(e => e.type === 'payment_settled' && e.data.status === 'COMPLETED')) r.paid += 1;

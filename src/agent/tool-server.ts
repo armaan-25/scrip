@@ -23,6 +23,7 @@ import { orderFingerprint } from '../trace/fingerprint.js';
 import type { FlightTraceService } from '../trace/trace-service.js';
 import { catalog, describeOffer, findOffer } from './catalog.js';
 import type { FlightSource } from './profiles.js';
+import { checkSource, type FetchPage, fetchPublicPage } from './source-check.js';
 
 export interface RunContext {
   traceId: string; agent: AuthenticatedAgent; mandateId: string; rail: Rail;
@@ -96,7 +97,12 @@ const TOOLS = [
 ];
 
 export class ScripToolServer {
-  constructor(private service: FlightTraceService, private contexts: Map<string, RunContext>, private log: (line: string) => void = () => {}) {}
+  constructor(
+    private service: FlightTraceService,
+    private contexts: Map<string, RunContext>,
+    private log: (line: string) => void = () => {},
+    private fetchPage: FetchPage = fetchPublicPage,
+  ) {}
 
   /** Handle one JSON-RPC message. Returns null for notifications (no reply). */
   async handle(body: unknown, traceId: string | undefined): Promise<Json | null> {
@@ -157,6 +163,8 @@ export class ScripToolServer {
       if (typeof parsed === 'string') return error(parsed);
       offer = parsed;
       (ctx.webOffers ??= new Map()).set(offer.offerId, offer);
+      // Recorded for observability only; the agent is not told, and the purchase check below is unchanged.
+      this.service.recordSourceCheck(ctx.traceId, await checkSource(offer, String(a.sourceUrl), this.fetchPage));
     } else {
       offer = findOffer(String(a.offerId ?? ''));
     }

@@ -225,6 +225,12 @@
       case 'candidate_checked': return d.violations.length
         ? ['no', `Scrip checked ${offerName(d.offer)} (${usd(d.offer.totalCents)}): breaks the request, ` + d.violations.map(v => v.detail).join('; ')]
         : ['ok', `Scrip checked ${offerName(d.offer)} (${usd(d.offer.totalCents)}): fits the request`];
+      case 'source_checked': {
+        const where = link(d.url);
+        if (d.status === 'backed') return ['ok', `Opened ${where}: the price and flights the agent claimed are on the page`, true];
+        if (d.status === 'unreadable') return ['', `Tried to open ${where} to check the agent's claim: ${esc(d.detail)}`, true];
+        return ['warn', `Opened ${where}: the agent's claim is not on the page (${esc(d.detail.replace('not on the page: ', 'missing '))})`, true];
+      }
       case 'purchase_refused': return ['no', 'Blocked. No money moved.'];
       case 'purchase_approved': return ['ok', `Approved ${offerName(d.offer)} for ${usd(d.totalCents)}`];
       case 'payment_submitted': return !approvedFp || d.fingerprintTag === approvedFp
@@ -281,6 +287,7 @@
         <div class="big" style="margin-top:8px">Understood ${r.understoodCorrectly} of ${r.stated} times</div>
         ${misread ? `<div class="muted">Got wrong: ${esc(misread)}</div>` : ''}
         <div class="muted">${r.paid} paid, ${r.blockedBeforePayment} blocked, ${r.deniedAtPayment} denied</div>
+        ${r.sourceChecks ? `<div class="muted">Claims backed by their source page: ${r.sourceBacked} of ${r.sourceChecks}</div>` : ''}
         <div class="muted">${r.runs} run${r.runs === 1 ? '' : 's'}, $${r.costUsd.toFixed(2)} of model use</div></div>`;
     }).join('');
   }

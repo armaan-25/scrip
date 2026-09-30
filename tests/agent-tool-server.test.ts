@@ -78,7 +78,8 @@ describe('ScripToolServer, real-web flights', () => {
     const rail = await setupRail('offline', 'test-web');
     traceId = world.service.start('armaan', 'JFK to SFO Oct 16-18, nonstop, $700 max');
     world.service.confirm(traceId, webRequirements);
-    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: world.mandateId, rail, flights: 'web', webOffers: new Map() }]]));
+    const page = async () => ({ status: 200, text: `<html><body>${'JetBlue nonstop New York to San Francisco. '.repeat(10)} B6 415 and B6 416, round trip $612.40</body></html>` });
+    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: world.mandateId, rail, flights: 'web', webOffers: new Map() }]]), () => {}, page);
   });
 
   it('offers no catalog search, only the tools to state, request, and pay', async () => {
@@ -93,6 +94,8 @@ describe('ScripToolServer, real-web flights', () => {
     expect(requested.text).toMatch(/web-1/);
     expect((await call('pay', { offerId: 'web-1' })).text).toMatch(/COMPLETED/);
     expect(world.service.hasApprovedPayment(traceId)).toBe(true);
+    const check = world.service.events(traceId).find(e => e.type === 'source_checked');
+    expect(check?.type === 'source_checked' && check.data.status).toBe('backed');
   });
 
   it('refuses a one-stop flight and rejects a submission with no source page', async () => {

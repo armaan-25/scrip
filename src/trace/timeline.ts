@@ -27,6 +27,9 @@ export function renderTimeline(events: RecordedEvent[]): string[] {
       case 'hold_decided': return e.data.decision === 'approved'
         ? 'Connector: fingerprint matches the approved purchase → APPROVED'
         : `Connector: DENIED → ${e.data.reasons.join('; ')}`;
+      case 'source_checked': return e.data.status === 'backed'
+        ? `Source check: ${e.data.url} shows the claimed price and flights`
+        : `Source check: ${e.data.status === 'unreadable' ? 'could not read' : 'NOT BACKED by'} ${e.data.url}: ${e.data.detail}`;
       case 'agent_run_started': return `Real agent started: ${e.data.profile} (model ${e.data.model}, version ${e.data.agentVersionId.slice(0, 8)})`;
       case 'agent_tool_call': return `Agent called ${e.data.tool}(${JSON.stringify(e.data.input).slice(0, 160)})`;
       case 'agent_tool_result': return `${e.data.isError ? 'Tool error' : 'Tool result'} from ${e.data.tool}: ${e.data.output.slice(0, 200)}`;

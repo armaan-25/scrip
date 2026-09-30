@@ -22,8 +22,8 @@ describe('trackRecords', () => {
     ];
     const records = trackRecords(traces);
     expect(records).toEqual([
-      { versionId: 'v1', profile: 'careful', runs: 1, understoodCorrectly: 1, stated: 1, misread: {}, paid: 1, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 1, costUsd: 0.1 },
-      { versionId: 'v2', profile: 'bargain', runs: 2, understoodCorrectly: 0, stated: 2, misread: { directOnly: 2, refundableOnly: 1 }, paid: 0, blockedBeforePayment: 1, deniedAtPayment: 1, toolCalls: 0, costUsd: 0.5 },
+      { versionId: 'v1', profile: 'careful', runs: 1, understoodCorrectly: 1, stated: 1, misread: {}, paid: 1, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 1, sourceChecks: 0, sourceBacked: 0, costUsd: 0.1 },
+      { versionId: 'v2', profile: 'bargain', runs: 2, understoodCorrectly: 0, stated: 2, misread: { directOnly: 2, refundableOnly: 1 }, paid: 0, blockedBeforePayment: 1, deniedAtPayment: 1, toolCalls: 0, sourceChecks: 0, sourceBacked: 0, costUsd: 0.5 },
     ]);
   });
 

@@ -15,6 +15,7 @@ export type TraceEvent =
   | { type: 'hold_decision_started'; data: { approvalId: string; paymentId: string; decision: 'approved' | 'denied' } }
   | { type: 'hold_decided'; data: { approvalId: string; paymentId: string; decision: 'approved' | 'denied'; reasons: string[] } }
   | { type: 'payment_settled'; data: { paymentId: string; status: string; note?: string } }
+  | { type: 'source_checked'; data: { offerId: string; url: string; status: 'backed' | 'not_backed' | 'unreadable'; priceShown: boolean; flightsShown: string[]; flightsMissing: string[]; detail: string } }
   | { type: 'agent_run_started'; data: { agentVersionId: string; profile: string; model: string; prompt: string } }
   | { type: 'agent_tool_call'; data: { toolUseId: string; tool: string; input: unknown } }
   | { type: 'agent_tool_result'; data: { toolUseId: string; tool: string; output: string; isError: boolean } }
