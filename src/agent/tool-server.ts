@@ -7,6 +7,7 @@
  * connector releases or denies it). The fingerprint on the payment is
  * computed here from the catalog offer, never supplied by the agent.
  */
+import { paymentDescription } from '../flights/rules.js';
 import type { FlightRequirements } from '../flights/types.js';
 import type { AuthenticatedAgent } from '../missions/agent-identity.js';
 import { NaturalHoldConnector } from '../rails/natural-hold-connector.js';
@@ -121,7 +122,7 @@ export class ScripToolServer {
     if (!this.service.approvedPurchase(ctx.traceId)) return error('No purchase has been approved for this request. Payment not sent.');
     const fingerprintTag = orderFingerprint(offer);
     const payment = await ctx.rail.payer.pay({
-      amountCents: offer.totalCents, recipient: ctx.rail.recipient, description: `Flight ${offer.offerId}`, instanceId: ctx.traceId,
+      amountCents: offer.totalCents, recipient: ctx.rail.recipient, description: paymentDescription(offer), instanceId: ctx.traceId,
       tags: { scrip_trace_id: ctx.traceId, scrip_order_fp: fingerprintTag },
     });
     this.service.recordPaymentSubmitted(ctx.traceId, { paymentId: payment.paymentId, instanceId: ctx.traceId, fingerprintTag, amountCents: offer.totalCents });

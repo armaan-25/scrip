@@ -11,6 +11,15 @@ export function stops(offer: FlightOffer): number {
   return Math.max(offer.outbound.length, offer.inbound.length) - 1;
 }
 
+/** What the payment is for, readable on Natural's dashboard (80-character limit). */
+export function paymentDescription(offer: FlightOffer): string {
+  const first = offer.outbound[0], back = offer.inbound[0];
+  const day = (iso: string) => new Date(iso.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const route = first && back ? `${first.from}-${offer.outbound.at(-1)?.to ?? first.to} ${day(first.departAt)} to ${day(back.departAt)}` : offer.offerId;
+  const n = stops(offer);
+  return `${offer.carrier} ${route}, ${n === 0 ? 'nonstop' : `${n} stop`}, ${offer.refundable ? 'refundable' : 'non-refundable'}`.slice(0, 80);
+}
+
 /** Every requirement the offer breaks, in a fixed order. Empty means it fits. */
 export function checkOffer(req: FlightRequirements, offer: FlightOffer): Violation[] {
   const out = offer.outbound, back = offer.inbound;

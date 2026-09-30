@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { confirmedRequirements, demoRequest, layoverOffer, nonstopOffer } from '../src/flights/fixtures.js';
+import { paymentDescription } from '../src/flights/rules.js';
 import type { FlightOffer, FlightRequirements } from '../src/flights/types.js';
 import { TaskAuthorizationManager } from '../src/lease.js';
 import type { AgentManifest } from '../src/missions/agent-identity.js';
@@ -147,7 +148,7 @@ export async function runFlightTraceDemo(opts: FlightDemoOptions = {}): Promise<
         const paidFor = scripted.payFor(chosen);
         const fingerprintTag = orderFingerprint(paidFor); // simulated seller quote for what is actually being bought
         const payment = await payer.pay({
-          amountCents: paidFor.totalCents, recipient, description: `Flight ${paidFor.offerId}`, instanceId: traceId,
+          amountCents: paidFor.totalCents, recipient, description: paymentDescription(paidFor), instanceId: traceId,
           tags: { scrip_trace_id: traceId, scrip_order_fp: fingerprintTag },
         });
         service.recordPaymentSubmitted(traceId, { paymentId: payment.paymentId, instanceId: traceId, fingerprintTag, amountCents: paidFor.totalCents });

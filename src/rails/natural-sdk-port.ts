@@ -71,7 +71,7 @@ export class SdkNaturalPort implements NaturalPort {
   /** Sandbox only: ask the funded payer fixture for money and simulate it paying. */
   async fundWallet(cents: number): Promise<void> {
     const request = await this.client.paymentRequests.create({
-      idempotencyKey: randomUUID(), amount: cents, currency: 'USD', description: 'Scrip demo funding', payerName: 'Sandbox Payer',
+      idempotencyKey: randomUUID(), amount: cents, currency: 'USD', description: 'Test money for the Scrip demo', payerName: 'Sandbox Payer',
       payer: { type: 'email', value: 'payment-request-payer@sandbox.natural.test' },
     });
     await this.raw('POST', `/simulations/payment-requests/${request.data.id}/fulfill`);
