@@ -162,6 +162,12 @@ request → person confirms requirements → agent states its interpretation
 | `src/rails/natural-hold-connector.ts` | polls Natural holds; untagged holds are left for a human; never approves on error |
 | `src/rails/natural-sdk-port.ts`, `fake-natural.ts` | real Natural (sandbox) and an in-memory stand-in behind one interface |
 | `demo/flight-trace.ts` | the three-agent demo |
+| `src/agent/tool-server.ts` | the four MCP tools a real agent gets; `pay` computes the fingerprint server-side |
+| `src/agent/run-claude-agent.ts`, `stream-parser.ts` | spawns headless Claude Code and turns its stream into tool-call activity |
+| `src/agent/profiles.ts`, `catalog.ts` | agent versions (instructions + model → manifest) and the flight catalog |
+| `src/rails/rail-setup.ts`, `settle.ts` | offline or sandbox rail setup/restore; wait for a hold to be decided |
+| `src/trace/track-record.ts` | per-agent-version record built only from traces |
+| `visuals/trace-server.ts` | page server: `/mcp` tools, `/run-agent` (real agent, SSE), `/run` (scripted), `/track-record` |
 
 ## Files
 

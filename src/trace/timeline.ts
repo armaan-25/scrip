@@ -27,6 +27,11 @@ export function renderTimeline(events: RecordedEvent[]): string[] {
       case 'hold_decided': return e.data.decision === 'approved'
         ? 'Connector: fingerprint matches the approved purchase → APPROVED'
         : `Connector: DENIED → ${e.data.reasons.join('; ')}`;
+      case 'agent_run_started': return `Real agent started: ${e.data.profile} (model ${e.data.model}, version ${e.data.agentVersionId.slice(0, 8)})`;
+      case 'agent_tool_call': return `Agent called ${e.data.tool}(${JSON.stringify(e.data.input).slice(0, 160)})`;
+      case 'agent_tool_result': return `${e.data.isError ? 'Tool error' : 'Tool result'} from ${e.data.tool}: ${e.data.output.slice(0, 200)}`;
+      case 'agent_message': return `Agent said: ${e.data.text.slice(0, 300)}`;
+      case 'agent_run_finished': return `Agent finished${e.data.turns !== null ? ` in ${e.data.turns} turns` : ''}${e.data.costUsd !== null ? `, $${e.data.costUsd.toFixed(3)} of model usage` : ''}${e.data.ok ? '' : ' (with an error)'}`;
       case 'payment_settled': return `Final Natural status: ${e.data.status}${e.data.note ? ` (${e.data.note})` : ''}`;
     }
   });

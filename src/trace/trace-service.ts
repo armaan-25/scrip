@@ -10,7 +10,7 @@ import type { TaskAuthorizationManager } from '../lease.js';
 import type { AuthenticatedAgent } from '../missions/agent-identity.js';
 import type { SqliteAgentRegistry } from '../missions/agent-registry.js';
 import { TERMINAL_STATUSES } from '../rails/natural-port.js';
-import type { RecordedEvent, TraceEvent } from './events.js';
+import type { AgentTraceEvent, RecordedEvent, TraceEvent } from './events.js';
 import { orderFingerprint } from './fingerprint.js';
 import type { SqliteTraceStore } from './trace-store.js';
 
@@ -75,6 +75,8 @@ export class FlightTraceService {
     return { approved: true, fingerprint, totalCents: offer.totalCents };
   }
 
+  /** What a real agent did: runs, tool calls and results, messages. */
+  recordAgent(traceId: string, event: AgentTraceEvent): void { this.append(traceId, event); }
   recordPaymentSubmitted(traceId: string, data: Data<'payment_submitted'>): void { this.append(traceId, { type: 'payment_submitted', data }); }
   recordHold(traceId: string, data: Data<'payment_held'>): void { this.append(traceId, { type: 'payment_held', data }); }
   recordDecision(traceId: string, data: Data<'hold_decided'>): void { this.append(traceId, { type: 'hold_decided', data }); }

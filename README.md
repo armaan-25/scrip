@@ -88,6 +88,22 @@ One request ("NYC to SF, Oct 16–18, direct only, refundable, under $600"), thr
 
 The live run needs `NATURAL_SANDBOX_API_KEY` and `NATURAL_SANDBOX_AGENT_KEY`. Details in [docs/natural.md](docs/natural.md).
 
+### Real AI agents, per-version track record
+
+```bash
+npm run ui                         # page at http://localhost:8799
+SCRIP_RAIL=sandbox npm run ui      # same, sandbox selectable
+```
+
+Pick "Real AI agent": a real Claude agent (Claude Code CLI, headless, no personal
+settings) gets four Scrip tools over MCP (`search_flights`, `state_understanding`,
+`request_purchase`, `pay`) and decides on its own what to do. Every tool call,
+result, and message is recorded in the trace next to Scrip's checks and Natural's
+hold. Each agent version (profile instructions + model) builds a track record:
+how often it understood the request, what it misread, what was blocked, what paid.
+Try "Vague request" with the bargain agent to see it drop requirements and get
+blocked. Needs the `claude` CLI logged in. The flight catalog and merchant are simulated.
+
 ## Docs
 
 - [How it works](docs/architecture.md): the layers, one purchase end to end,

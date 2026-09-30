@@ -20,8 +20,9 @@ import type { AgentManifest } from '../src/missions/agent-identity.js';
 import { SqliteAgentRegistry } from '../src/missions/agent-registry.js';
 import { FakeNatural } from '../src/rails/fake-natural.js';
 import { NaturalHoldConnector } from '../src/rails/natural-hold-connector.js';
-import { type AgentPayer, type NaturalPort, TERMINAL_STATUSES } from '../src/rails/natural-port.js';
+import type { AgentPayer, NaturalPort } from '../src/rails/natural-port.js';
 import { SdkAgentPayer, SdkNaturalPort } from '../src/rails/natural-sdk-port.js';
+import { settlePayment } from '../src/rails/settle.js';
 import { orderFingerprint } from '../src/trace/fingerprint.js';
 import type { RecordedEvent } from '../src/trace/events.js';
 import { renderTimeline } from '../src/trace/timeline.js';
@@ -52,47 +53,6 @@ const manifest: AgentManifest = {
 export type ScenarioOutcome = 'paid' | 'blocked_before_payment' | 'denied_at_payment' | 'undecided';
 export interface FlightDemoResult {
   scenarios: { name: string; traceId: string; outcome: ScenarioOutcome; finalStatus?: string }[];
-}
-
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
-async function waitForTerminal(owner: NaturalPort, paymentId: string): Promise<string> {
-  let status = 'unknown';
-  for (let i = 0; i < 20; i++) {
-    status = await owner.getPaymentStatus(paymentId);
-    if (TERMINAL_STATUSES.has(status)) return status;
-    await sleep(500);
-  }
-  return status;
-}
-
-/**
- * Poll until the connector decides this payment's hold (new holds can take a
- * moment to appear in Natural's list), then record a final status only once
- * it is final. A denied hold is final even though the sandbox leaves the
- * payment record at IN_REVIEW when the denial carries a reason.
- */
-async function settle(
-  service: FlightTraceService, connector: NaturalHoldConnector, owner: NaturalPort,
-  traceId: string, paymentId: string, log: (line?: string) => void,
-): Promise<{ outcome: ScenarioOutcome; finalStatus?: string }> {
-  const decisionFor = () => service.events(traceId).find(e => e.type === 'hold_decided' && e.data.paymentId === paymentId);
-  for (let i = 0; i < 20 && !decisionFor(); i++) {
-    const poll = await connector.pollOnce();
-    for (const error of poll.errors) log(`  connector error (will retry): ${error}`);
-    if (!decisionFor()) await sleep(500);
-  }
-  const decided = decisionFor();
-  if (decided?.type !== 'hold_decided') return { outcome: 'undecided' };
-  const observed = await waitForTerminal(owner, paymentId);
-  if (decided.data.decision === 'denied') {
-    const note = TERMINAL_STATUSES.has(observed) ? undefined : `hold denied on Natural; payment record still shows ${observed}`;
-    service.recordSettlement(traceId, { paymentId, status: 'APPROVAL_DENIED', note });
-    return { outcome: 'denied_at_payment', finalStatus: 'APPROVAL_DENIED' };
-  }
-  if (!TERMINAL_STATUSES.has(observed)) return { outcome: 'undecided', finalStatus: observed };
-  service.recordSettlement(traceId, { paymentId, status: observed });
-  return { outcome: observed === 'COMPLETED' ? 'paid' : 'denied_at_payment', finalStatus: observed };
 }
 
 export interface FlightDemoOptions {
@@ -191,7 +151,7 @@ export async function runFlightTraceDemo(opts: FlightDemoOptions = {}): Promise<
           tags: { scrip_trace_id: traceId, scrip_order_fp: fingerprintTag },
         });
         service.recordPaymentSubmitted(traceId, { paymentId: payment.paymentId, instanceId: traceId, fingerprintTag, amountCents: paidFor.totalCents });
-        const settled = await settle(service, connector, owner, traceId, payment.paymentId, log);
+        const settled = await settlePayment(service, connector, owner, traceId, payment.paymentId, log);
         result.scenarios.push({ name: scripted.name, traceId, ...settled });
       } else {
         result.scenarios.push({ name: scripted.name, traceId, outcome: 'blocked_before_payment' });

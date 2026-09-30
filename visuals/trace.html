@@ -88,6 +88,20 @@
   .pay .hist { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
   .pay .hist span { font-size: 12px; line-height: 16px; padding: 2px 8px; border-radius: var(--r-sm); background: var(--panel); color: var(--ink-2); }
   .pay .reason { margin-top: 10px; font-size: 12px; line-height: 16px; color: var(--error); }
+  .step details { margin-top: 6px; }
+  .step summary { cursor: pointer; color: var(--ink-2); font-size: 12px; line-height: 16px; list-style: none; }
+  .step summary::before { content: "+ "; } .step details[open] summary::before { content: "\2212 "; }
+  .step pre { margin: 6px 0 0; padding: 10px 12px; background: var(--panel); border-radius: var(--r-md); font: 12px/18px var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+  .step.tool .w, .step.tool .l { color: var(--ink); }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; cursor: pointer; }
+  .check input { accent-color: var(--ink); margin: 0; }
+  [hidden] { display: none !important; }
+  .rec { background: var(--surface); border-radius: var(--r-lg); padding: 14px; margin-bottom: 10px; }
+  .rec .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .rec .v { font: 12px/18px var(--mono); color: var(--ink-3); }
+  .rec dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13px; line-height: 18px; }
+  .rec dt { color: var(--ink-2); } .rec dd { margin: 0; text-align: right; }
+  .ledger h2.sub { margin-top: 24px; }
   .foot { margin-top: 16px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
 
   @keyframes settle { from { background: var(--hover); } to { background: transparent; } }
@@ -101,19 +115,29 @@
 </head>
 <body>
 <div class="bar">
-  <div class="brand"><strong>Scrip</strong><span>Agent payments, checked against what was asked</span></div>
+  <div class="brand"><strong>Scrip</strong><span>Agent activity</span></div>
   <div class="actions">
     <select id="mode" aria-label="Where payments run">
       <option value="offline">Offline, simulated Natural</option>
       <option value="sandbox">Natural sandbox</option>
     </select>
-    <button class="primary" id="run">Run agents</button>
+    <select id="kind" aria-label="What to run">
+      <option value="real">Real AI agent</option>
+      <option value="scripted">Three scripted agents</option>
+    </select>
+    <select id="profile" aria-label="Agent version"></select>
+    <select id="req" aria-label="What the person says">
+      <option value="precise">Precise request</option>
+      <option value="vague">Vague request</option>
+    </select>
+    <label class="check" id="webWrap"><input type="checkbox" id="web" /> Web search</label>
+    <button class="primary" id="run">Run</button>
     <span id="status" role="status">Ready</span>
   </div>
 </div>
 
 <div class="top">
-  <div class="request"><span class="k">Every agent gets the same request</span><span class="v">Book NYC to SF, Oct 16 to 18. Direct only, refundable, under $600.</span></div>
+  <div class="request"><span class="k" id="reqK">The person asks</span><span class="v" id="reqV"></span></div>
   <div class="rail" aria-label="Payment path">
     <div class="fill" id="fill"></div>
     <div class="stop" id="n-agent"><div class="dot"></div><div class="name">Agent</div><small id="n-agent-s">Waiting to run</small></div>
@@ -136,6 +160,8 @@
     <h2>On Natural</h2>
     <div id="natural"><p class="empty">Payments and holds on Natural show up here and update live.</p></div>
     <p class="foot" id="railNote"></p>
+    <h2 class="sub">Track record by agent version</h2>
+    <div id="records"><p class="empty">After a real agent runs, each version's record builds up here: how often it understood the request, what it misread, and how its payments ended.</p></div>
   </div>
 </main>
 
@@ -143,7 +169,14 @@
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const usd = c => '$' + (c / 100).toFixed(2);
+  const clock = at => new Date(at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false });
   const AGENTS = { faithful: 'Faithful agent', misreads: 'Misreads the request', switches: 'Switches flights at payment' };
+  const REQUESTS = {
+    precise: 'Book NYC to SF, Oct 16 to 18. Direct only, refundable, under $600.',
+    vague: 'Get me the cheapest flight from NYC to SF, out Friday Oct 16, back Sunday Oct 18.',
+    confirmed: 'JFK to SFO, Oct 16 to 18, direct only, refundable, under $600.',
+  };
+  const FIELDS = { from: 'From', to: 'To', departOn: 'Depart date', returnOn: 'Return date', directOnly: 'Direct only', refundableOnly: 'Refundable', maxTotalCents: 'Budget' };
   const STOPS = ['agent', 'scrip', 'natural', 'merchant'];
   let steps = {}, payments = {}, outcomes = {}, selected = null, source = null, seen = 0, approvedFp = null;
 
@@ -151,10 +184,48 @@
   fetch('/config').then(r => r.json()).then(c => {
     if (!auto) $('mode').value = c.defaultMode;
     if (!c.sandboxAvailable) $('mode').querySelector('[value=sandbox]').disabled = true;
+    $('profile').innerHTML = (c.profiles || []).map(p => `<option value="${esc(p.id)}">${esc(p.label)} (${esc(p.model)})</option>`).join('');
+    for (const p of c.profiles || []) AGENTS['real:' + p.id] = p.label;
   }).catch(() => {});
 
+  function syncControls() {
+    const real = $('kind').value === 'real';
+    for (const id of ['profile', 'req', 'webWrap']) $(id).hidden = !real;
+    $('reqK').textContent = real ? 'The person asks' : 'Every agent gets the same request';
+    $('reqV').textContent = real ? REQUESTS[$('req').value] + '  Confirmed as: ' + REQUESTS.confirmed : REQUESTS.precise;
+  }
+  $('kind').onchange = syncControls; $('req').onchange = syncControls; syncControls();
+
+  function renderRecords(list) {
+    if (!list.length) return;
+    const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : 'n/a';
+    $('records').innerHTML = list.map(r => {
+      const misread = Object.entries(r.misread).map(([f, n]) => `${FIELDS[f] || f} ${n}x`).join(', ') || 'Nothing';
+      return `<div class="rec"><div class="row"><strong>${esc(AGENTS['real:' + r.profile] || r.profile)}</strong><span class="v">${esc(r.versionId.slice(0, 8))}</span></div>
+        <dl><dt>Runs</dt><dd>${r.runs}</dd>
+        <dt>Understood the request</dt><dd>${r.understoodCorrectly} of ${r.stated} (${pct(r.understoodCorrectly, r.stated)})</dd>
+        <dt>Misread</dt><dd>${esc(misread)}</dd>
+        <dt>Paid, matched</dt><dd>${r.paid}</dd>
+        <dt>Purchases blocked</dt><dd>${r.blockedBeforePayment}</dd>
+        <dt>Payment denied</dt><dd>${r.deniedAtPayment}</dd>
+        <dt>Tool calls</dt><dd>${r.toolCalls}</dd>
+        <dt>Model cost</dt><dd>$${r.costUsd.toFixed(3)}</dd></dl></div>`;
+    }).join('');
+  }
+  const loadRecords = () => fetch('/track-record').then(r => r.json()).then(renderRecords).catch(() => {});
+  loadRecords();
+
   const who = t => ({ request_received: 'Person', requirements_confirmed: 'Person', agent_interpretation_recorded: 'Agent',
-    candidate_checked: 'Agent', payment_submitted: 'Agent', payment_held: 'Natural', payment_settled: 'Natural' }[t] || 'Scrip');
+    candidate_checked: 'Agent', payment_submitted: 'Agent', payment_held: 'Natural', payment_settled: 'Natural',
+    agent_run_started: 'Agent', agent_tool_call: 'Agent', agent_tool_result: 'Tool', agent_message: 'Agent', agent_run_finished: 'Agent' }[t] || 'Scrip');
+  const pretty = v => { try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); } catch { return String(v); } };
+  function line(s) {
+    const d = s.data;
+    if (s.type === 'agent_tool_call') return `Called <strong>${esc(d.tool)}</strong><details><summary>Input</summary><pre>${esc(pretty(d.input))}</pre></details>`;
+    if (s.type === 'agent_tool_result') return `${d.isError ? 'Error from' : 'Result from'} ${esc(d.tool)}<details><summary>Output</summary><pre>${esc(pretty(d.output))}</pre></details>`;
+    if (s.type === 'agent_message') return 'Said: ' + esc(d.text);
+    return esc(s.line);
+  }
   function tone(s) {
     const d = s.data;
     if (s.type === 'interpretation_compared') return d.differences.length ? 'warn' : 'ok';
@@ -163,6 +234,7 @@
     if (s.type === 'purchase_approved') return 'ok';
     if (s.type === 'hold_decided') return d.decision === 'approved' ? 'ok' : 'no';
     if (s.type === 'payment_settled') return d.status === 'COMPLETED' ? 'ok' : 'no';
+    if (s.type === 'agent_tool_result' && d.isError) return 'no';
     return '';
   }
   function outcomeTag(o) {
@@ -182,8 +254,8 @@
   function renderTimeline() {
     const list = steps[selected] || [];
     $('timelineTitle').textContent = selected ? AGENTS[selected] || selected : 'Activity';
-    $('timeline').innerHTML = list.map((s, i) => `<div class="step ${i >= seen ? 'new' : ''}"><span class="t">${esc(s.at.slice(11, 19))}</span>
-      <span class="w">${who(s.type)}</span><span class="l ${tone(s)}">${esc(s.line)}</span></div>`).join('') || '<p class="empty">Waiting for the first step.</p>';
+    $('timeline').innerHTML = list.map((s, i) => `<div class="step ${i >= seen ? 'new' : ''} ${s.type.startsWith('agent_tool') ? 'tool' : ''}"><span class="t">${esc(clock(s.at))}</span>
+      <span class="w">${who(s.type)}</span><span class="l ${tone(s)}">${line(s)}</span></div>`).join('') || '<p class="empty">Waiting for the first step.</p>';
     seen = list.length;
   }
   function renderNatural() {
@@ -242,7 +314,10 @@
     steps = {}; payments = {}; outcomes = {}; selected = null; seen = 0;
     renderAgents(); renderTimeline(); renderNatural(); resetRail(); $('railNote').textContent = '';
     $('run').disabled = true; $('status').textContent = 'Running';
-    source = new EventSource('/run?mode=' + $('mode').value);
+    const mode = encodeURIComponent($('mode').value);
+    source = new EventSource($('kind').value === 'real'
+      ? `/run-agent?mode=${mode}&profile=${encodeURIComponent($('profile').value)}&request=${encodeURIComponent($('req').value)}${$('web').checked ? '&web=1' : ''}`
+      : '/run?mode=' + mode);
     source.addEventListener('step', e => {
       const s = JSON.parse(e.data);
       if (s.scenario !== selected) { selected = s.scenario; seen = 0; }
@@ -252,7 +327,7 @@
     source.addEventListener('log', e => { $('railNote').textContent += JSON.parse(e.data).line + ' '; });
     source.addEventListener('done', e => {
       for (const sc of JSON.parse(e.data).scenarios) outcomes[sc.name] = sc.outcome;
-      renderAgents(); $('status').textContent = 'Done'; $('run').disabled = false; source.close();
+      renderAgents(); $('status').textContent = 'Done'; $('run').disabled = false; source.close(); loadRecords();
     });
     source.addEventListener('error', e => {
       if (e.data) $('status').textContent = 'Stopped: ' + JSON.parse(e.data).message;
@@ -262,7 +337,12 @@
   }
   $('run').onclick = start;
   // ?run=offline or ?run=sandbox starts a run on load (handy for demos and screenshots).
-  if (auto === 'offline' || auto === 'sandbox') { $('mode').value = auto; start(); }
+  // ?agent=careful&req=vague runs the real agent on load once profiles are known.
+  const autoAgent = new URLSearchParams(location.search).get('agent');
+  if (auto === 'offline' || auto === 'sandbox') { $('mode').value = auto; $('kind').value = 'scripted'; syncControls(); start(); }
+  else if (autoAgent) fetch('/config').then(() => setTimeout(() => {
+    $('profile').value = autoAgent; $('req').value = new URLSearchParams(location.search).get('req') || 'precise'; syncControls(); start();
+  }, 300));
 </script>
 </body>
 </html>

@@ -42,6 +42,12 @@ export class SqliteTraceStore {
     return rows.map(r => ({ ...(JSON.parse(r.body) as TraceEvent), traceId, seq: r.seq, at: r.at }) as RecordedEvent);
   }
 
+  /** Every trace id, oldest first. */
+  traceIds(): string[] {
+    const rows = this.db.prepare('SELECT trace_id, MIN(at) AS first FROM trace_events GROUP BY trace_id ORDER BY first').all() as { trace_id: string }[];
+    return rows.map(r => r.trace_id);
+  }
+
   exists(traceId: string): boolean {
     return this.db.prepare('SELECT 1 FROM trace_events WHERE trace_id = ? LIMIT 1').get(traceId) !== undefined;
   }
