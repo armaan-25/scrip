@@ -105,3 +105,18 @@ describe('ScripToolServer, real-web flights', () => {
     expect((await call('pay', { offerId: 'web-1' })).isError).toBe(true);
   });
 });
+
+describe('ScripToolServer, ask-the-customer refusals', () => {
+  it('refuses without revealing what the customer confirmed', async () => {
+    const rail = await setupRail('offline', 'test-ask');
+    traceId = world.service.start('armaan', demoRequest);
+    world.service.confirm(traceId, confirmedRequirements);
+    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: world.mandateId, rail, refusalFeedback: 'ask_customer' }]]));
+    const understood = await call('state_understanding', { ...confirmedRequirements, directOnly: false, refundableOnly: false, maxTotalUsd: 600 });
+    const refused = await call('request_purchase', { offerId: 'offer-layover' });
+    for (const text of [understood.text, refused.text]) expect(text).not.toMatch(/direct|refundable|differs|matches/i);
+    expect(refused.text).toMatch(/ask the customer/i);
+    const recorded = world.service.events(traceId).find(e => e.type === 'purchase_refused');
+    expect(recorded?.type === 'purchase_refused' && recorded.data.reasons.length).toBe(2); // Scrip still records why
+  });
+});

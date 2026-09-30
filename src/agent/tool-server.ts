@@ -31,6 +31,12 @@ export interface RunContext {
   flights?: FlightSource;
   /** Offers the agent submitted from the web in this run, by Scrip-assigned id. */
   webOffers?: Map<string, FlightOffer>;
+  /**
+   * What a refusal tells the agent. explain (default) names the reasons, which
+   * reveals the person's requirements; ask_customer only says to stop and ask.
+   * Scrip records the reasons either way.
+   */
+  refusalFeedback?: 'explain' | 'ask_customer';
 }
 
 type Json = Record<string, unknown>;
@@ -151,6 +157,7 @@ export class ScripToolServer {
       maxTotalCents: Math.round(Number(a.maxTotalUsd ?? 0) * 100),
     };
     const differences = this.service.recordInterpretation(ctx.traceId, ctx.agent, interpretation);
+    if (ctx.refusalFeedback === 'ask_customer') return ok({ recorded: true });
     return ok(differences.length
       ? { recorded: true, note: 'Your understanding differs from what the customer confirmed in some fields. It has been recorded.' }
       : { recorded: true, note: 'Your understanding matches what the customer confirmed.' });
@@ -170,8 +177,9 @@ export class ScripToolServer {
     }
     if (!offer) return error(`No offer ${String(a.offerId)}`);
     const decision = await this.service.proposePurchase(ctx.traceId, ctx.agent, ctx.mandateId, offer, ctx.rail.naturalAgentId);
-    return ok(decision.approved
-      ? { approved: true, offerId: offer.offerId, message: 'Purchase approved. You may now pay for this offer.' }
+    if (decision.approved) return ok({ approved: true, offerId: offer.offerId, message: 'Purchase approved. You may now pay for this offer.' });
+    return ok(ctx.refusalFeedback === 'ask_customer'
+      ? { approved: false, refused: true, message: "Purchase refused: it does not match what the customer confirmed. Do not pay, and do not try other offers. Stop and ask the customer what they need." }
       : { approved: false, refused: true, reasons: decision.reasons, message: 'Purchase refused. Do not pay.' });
   }
 

@@ -113,6 +113,15 @@ web prices or schedules: the flight details are the agent's claim, with the sour
 page recorded as its evidence. The airline is never paid; Natural's test recipient
 stands in.
 
+**Monitors** read each run's trace and raise alerts about the decision behind the
+payment (`src/trace/monitors.ts`): misread the request; fixed it only after Scrip's
+refusal revealed the answer; claimed a price or flight that never appeared in
+anything it read; couldn't verify its source; paid for something other than what
+was approved. Alerts carry Natural's agent, payment, and approval IDs, and roll up
+per agent version in the track record. The "When Scrip refuses" switch chooses
+whether a refusal explains why (which leaks the person's requirements to the agent)
+or only tells the agent to stop and ask the customer.
+
 ## Docs
 
 - [How it works](docs/architecture.md): the layers, one purchase end to end,

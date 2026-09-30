@@ -4,7 +4,7 @@ import { trackRecords } from '../src/trace/track-record.js';
 
 let seq = 0;
 const ev = (traceId: string, e: TraceEvent): RecordedEvent => ({ ...e, traceId, seq: ++seq, at: '2026-09-29T12:00:00.000Z' }) as RecordedEvent;
-const started = (t: string, v: string, profile: string): RecordedEvent => ev(t, { type: 'agent_run_started', data: { agentVersionId: v, profile, model: 'sonnet', prompt: 'p' } });
+const started = (t: string, v: string, profile: string): RecordedEvent => ev(t, { type: 'agent_run_started', data: { agentVersionId: v, profile, model: 'sonnet', prompt: 'p', refusalFeedback: 'explain' } });
 const diff = (t: string, fields: string[]): RecordedEvent => ev(t, { type: 'interpretation_compared', data: { differences: fields.map(f => ({ field: f as 'directOnly', confirmed: true, interpreted: false })) } });
 
 describe('trackRecords', () => {
@@ -22,8 +22,8 @@ describe('trackRecords', () => {
     ];
     const records = trackRecords(traces);
     expect(records).toEqual([
-      { versionId: 'v1', profile: 'careful', runs: 1, understoodCorrectly: 1, stated: 1, misread: {}, paid: 1, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 1, sourceChecks: 0, sourceBacked: 0, costUsd: 0.1 },
-      { versionId: 'v2', profile: 'bargain', runs: 2, understoodCorrectly: 0, stated: 2, misread: { directOnly: 2, refundableOnly: 1 }, paid: 0, blockedBeforePayment: 1, deniedAtPayment: 1, toolCalls: 0, sourceChecks: 0, sourceBacked: 0, costUsd: 0.5 },
+      { versionId: 'v1', profile: 'careful', runs: 1, understoodCorrectly: 1, stated: 1, misread: {}, paid: 1, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 1, sourceChecks: 0, sourceBacked: 0, alerts: {}, costUsd: 0.1 },
+      { versionId: 'v2', profile: 'bargain', runs: 2, understoodCorrectly: 0, stated: 2, misread: { directOnly: 2, refundableOnly: 1 }, paid: 0, blockedBeforePayment: 1, deniedAtPayment: 1, toolCalls: 0, sourceChecks: 0, sourceBacked: 0, alerts: { misread: 2, paid_not_approved: 1 }, costUsd: 0.5 },
     ]);
   });
 

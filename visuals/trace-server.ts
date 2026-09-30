@@ -5,6 +5,7 @@
  *   /run-agent  a real Claude agent that searches (Scrip's demo catalog, or the
  *               live web), states its understanding, requests a purchase and
  *               pays through Scrip's tools on /mcp
+ * Every step also re-runs the monitors on that trace and streams its alerts.
  * /track-record returns each agent version's record across real-agent runs.
  *
  * Run: npm run ui   (PORT defaults to 8799). Local only.
@@ -26,6 +27,8 @@ import type { AuthenticatedAgent } from '../src/missions/agent-identity.js';
 import { SqliteAgentRegistry } from '../src/missions/agent-registry.js';
 import { setupRail } from '../src/rails/rail-setup.js';
 import { renderTimeline } from '../src/trace/timeline.js';
+import type { RecordedEvent } from '../src/trace/events.js';
+import { monitorAlerts } from '../src/trace/monitors.js';
 import { trackRecords } from '../src/trace/track-record.js';
 import { SqliteTraceStore } from '../src/trace/trace-store.js';
 import { FlightTraceService } from '../src/trace/trace-service.js';
@@ -73,6 +76,20 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 type Send = (event: string, data: unknown) => void;
+type Feedback = 'explain' | 'ask_customer';
+
+/** Streams one step, then the monitors' alerts for that scenario's trace so far. */
+function stepSender(send: Send) {
+  const seen = new Map<string, RecordedEvent[]>();
+  return (scenario: string, e: RecordedEvent) => {
+    const events = [...(seen.get(scenario) ?? []), e];
+    seen.set(scenario, events);
+    send('step', { scenario, type: e.type, at: e.at, line: renderTimeline([e])[0], data: e.data });
+    send('alerts', { scenario, alerts: monitorAlerts(events) });
+  };
+}
+/** Search results and page summaries are kept long enough for the monitors to check claims against. */
+const RESEARCH_TOOLS = new Set(['WebSearch', 'WebFetch', 'search_flights']);
 
 /**
  * What the person tells the agent (precise or vague wording) and what they
@@ -89,7 +106,7 @@ const SOURCES: Record<FlightSource, { requirements: FlightRequirements; requests
   },
 };
 
-async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: FlightSource, requestKind: string, send: Send) {
+async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: FlightSource, requestKind: string, refusalFeedback: Feedback, send: Send) {
   const source = SOURCES[flights];
   const words = source.requests[requestKind] ?? source.requests.precise;
   const allowWeb = flights === 'web';
@@ -102,7 +119,8 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flig
   send('log', { line: allowWeb
     ? `Real agent: Claude (${profile.model}) as "${profile.label}", researching real flights on the live web. Flight details are what the agent read on the page it cites; the airline is not paid (Natural's test recipient stands in).`
     : `Real agent: Claude (${profile.model}) as "${profile.label}". The flight catalog and merchant are simulated.` });
-  service.onEvent = e => send('step', { scenario, type: e.type, at: e.at, line: renderTimeline([e])[0], data: e.data });
+  const step = stepSender(send);
+  service.onEvent = e => step(scenario, e);
   const traceId = service.start('armaan', words);
   try {
     const requirementsDigest = service.confirm(traceId, source.requirements);
@@ -111,9 +129,9 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flig
       fundingSourceId: 'wallet-main', scopes: ['purchase'], notBefore: '2020-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z',
       outcomeContractDigest: requirementsDigest, changePolicy: 'require_approval', approvedBy: 'armaan', approvedAt: now().toISOString(),
     });
-    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail, flights, webOffers: new Map() });
+    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail, flights, webOffers: new Map(), refusalFeedback });
     const prompt = `Customer request: "${words}"`;
-    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: scenario.slice(5), model: profile.model, prompt } });
+    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: scenario.slice(5), model: profile.model, prompt, refusalFeedback } });
 
     const toolNames = new Map<string, string>();
     let final = { ok: false, turns: null as number | null, costUsd: null as number | null, summary: '' };
@@ -123,7 +141,7 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flig
       maxTurns: allowWeb ? 40 : 24, timeoutMs: allowWeb ? 480_000 : 240_000,
       onActivity: a => {
         if (a.kind === 'tool_call' && !a.internal) { toolNames.set(a.toolUseId, a.tool); service.recordAgent(traceId, { type: 'agent_tool_call', data: { toolUseId: a.toolUseId, tool: a.tool, input: a.input } }); }
-        if (a.kind === 'tool_result' && toolNames.has(a.toolUseId)) service.recordAgent(traceId, { type: 'agent_tool_result', data: { toolUseId: a.toolUseId, tool: toolNames.get(a.toolUseId) ?? '?', output: a.output.slice(0, 2000), isError: a.isError } });
+        if (a.kind === 'tool_result' && toolNames.has(a.toolUseId)) service.recordAgent(traceId, { type: 'agent_tool_result', data: { toolUseId: a.toolUseId, tool: toolNames.get(a.toolUseId) ?? '?', output: a.output.slice(0, RESEARCH_TOOLS.has(toolNames.get(a.toolUseId) ?? '') ? 20_000 : 2000), isError: a.isError } });
         if (a.kind === 'message') service.recordAgent(traceId, { type: 'agent_message', data: { text: a.text.slice(0, 2000) } });
         if (a.kind === 'final') final = { ok: a.ok, turns: a.turns, costUsd: a.costUsd, summary: a.text.slice(0, 2000) };
       },
@@ -187,11 +205,11 @@ const server = http.createServer(async (req, res) => {
     const send: Send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     try {
       const result = url.pathname === '/run-agent'
-        ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', send)
+        ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain', send)
         : await runFlightTraceDemo({
           mode,
           log: line => { if (line && !line.startsWith('  ') && !line.startsWith('──')) send('log', { line }); },
-          onEvent: (scenario, e) => send('step', { scenario, type: e.type, at: e.at, line: renderTimeline([e])[0], data: e.data }),
+          onEvent: stepSender(send),
         });
       send('done', result);
     } catch (error) {

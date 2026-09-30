@@ -4,6 +4,7 @@
  * its purchases ended. This is "did it do what it was told", not a log.
  */
 import type { RecordedEvent } from './events.js';
+import { type AlertKind, monitorAlerts } from './monitors.js';
 
 export interface VersionRecord {
   versionId: string;
@@ -20,6 +21,8 @@ export interface VersionRecord {
   /** Web flights whose cited page Scrip opened, and how many showed the claimed price and flights. */
   sourceChecks: number;
   sourceBacked: number;
+  /** Monitor alerts raised across this version's runs, by kind. */
+  alerts: Partial<Record<AlertKind, number>>;
   costUsd: number;
 }
 
@@ -31,8 +34,9 @@ export function trackRecords(traces: RecordedEvent[][]): VersionRecord[] {
     const versionId = start?.type === 'agent_run_started' ? start.data.agentVersionId : interp?.type === 'agent_interpretation_recorded' ? interp.data.agentVersionId : undefined;
     if (!versionId) continue;
     const profile = start?.type === 'agent_run_started' ? start.data.profile : 'scripted';
-    const r = byVersion.get(versionId) ?? { versionId, profile, runs: 0, stated: 0, understoodCorrectly: 0, misread: {}, paid: 0, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 0, sourceChecks: 0, sourceBacked: 0, costUsd: 0 };
+    const r = byVersion.get(versionId) ?? { versionId, profile, runs: 0, stated: 0, understoodCorrectly: 0, misread: {}, paid: 0, blockedBeforePayment: 0, deniedAtPayment: 0, toolCalls: 0, sourceChecks: 0, sourceBacked: 0, alerts: {}, costUsd: 0 };
     r.runs += 1;
+    for (const a of monitorAlerts(events)) r.alerts[a.kind] = (r.alerts[a.kind] ?? 0) + 1;
     for (const e of events) {
       if (e.type === 'interpretation_compared') {
         r.stated += 1;
