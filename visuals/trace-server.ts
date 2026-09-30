@@ -2,8 +2,9 @@
  * Live page for Scrip. Two kinds of runs, both streamed to the browser as
  * they happen (server-sent events):
  *   /run        the three scripted agents (repeatable demo)
- *   /run-agent  a real Claude agent that searches, states its understanding,
- *               requests a purchase and pays through Scrip's tools on /mcp
+ *   /run-agent  a real Claude agent that searches (Scrip's demo catalog, or the
+ *               live web), states its understanding, requests a purchase and
+ *               pays through Scrip's tools on /mcp
  * /track-record returns each agent version's record across real-agent runs.
  *
  * Run: npm run ui   (PORT defaults to 8799). Local only.
@@ -14,11 +15,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runFlightTraceDemo } from '../demo/flight-trace.js';
-import { findProfile, manifestFor, PROFILES } from '../src/agent/profiles.js';
+import { type FlightSource, findProfile, instructionsFor, manifestFor, PROFILES, scripToolsFor } from '../src/agent/profiles.js';
 import { runClaudeAgent } from '../src/agent/run-claude-agent.js';
 import { type RunContext, ScripToolServer } from '../src/agent/tool-server.js';
 import { loadConfig } from '../src/config.js';
 import { confirmedRequirements, demoRequest } from '../src/flights/fixtures.js';
+import type { FlightRequirements } from '../src/flights/types.js';
 import { TaskAuthorizationManager } from '../src/lease.js';
 import type { AuthenticatedAgent } from '../src/missions/agent-identity.js';
 import { SqliteAgentRegistry } from '../src/missions/agent-registry.js';
@@ -47,16 +49,17 @@ const contexts = new Map<string, RunContext>();
 const tools = new ScripToolServer(service, contexts, line => console.log('[tools]', line));
 const agents = new Map<string, { lineageId: string; versionId: string; auth: AuthenticatedAgent }>();
 
-function agentFor(profileId: string) {
-  const cached = agents.get(profileId);
+function agentFor(profileId: string, source: FlightSource) {
+  const key = `${profileId}:${source}`;
+  const cached = agents.get(key);
   if (cached) return cached;
   const profile = findProfile(profileId);
   if (!profile) throw new Error(`Unknown agent profile ${profileId}`);
   const lineage = registry.registerLineage({ ownerId: 'armaan', operator: 'scrip-demo', displayName: profile.label }, now());
-  const version = registry.registerVersion({ lineageId: lineage.lineageId, manifest: manifestFor(profile), registeredBy: 'armaan' }, now());
+  const version = registry.registerVersion({ lineageId: lineage.lineageId, manifest: manifestFor(profile, source), registeredBy: 'armaan' }, now());
   const credential = registry.issueCredential({ lineageId: lineage.lineageId, versionId: version.versionId, expiresAt: '2099-12-31T00:00:00Z' }, now());
   const entry = { lineageId: lineage.lineageId, versionId: version.versionId, auth: registry.authenticate(credential.credentialId, credential.secret, now()) };
-  agents.set(profileId, entry);
+  agents.set(key, entry);
   return entry;
 }
 
@@ -71,39 +74,53 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 
 type Send = (event: string, data: unknown) => void;
 
-/** What the person told the agent. Their confirmed requirements in Scrip are the same either way. */
-const REQUESTS: Record<string, string> = {
-  precise: demoRequest,
-  vague: 'Get me the cheapest flight from NYC to SF, out Friday Oct 16, back Sunday Oct 18.',
+/**
+ * What the person tells the agent (precise or vague wording) and what they
+ * confirmed, per flight source. The confirmed requirements are the same for
+ * both wordings. Real-web runs use a budget real nonstop fares can meet and
+ * drop "refundable", which real fares under the budget rarely are.
+ */
+const vague = 'Get me the cheapest flight from NYC to SF, out Friday Oct 16, back Sunday Oct 18.';
+const SOURCES: Record<FlightSource, { requirements: FlightRequirements; requests: Record<string, string> }> = {
+  catalog: { requirements: confirmedRequirements, requests: { precise: demoRequest, vague } },
+  web: {
+    requirements: { ...confirmedRequirements, refundableOnly: false, maxTotalCents: 70000 },
+    requests: { precise: 'Book a round trip from JFK to SFO, leaving Friday Oct 16 and returning Sunday Oct 18, 2026. Nonstop only, $700 total max.', vague },
+  },
 };
 
-async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', allowWeb: boolean, requestKind: string, send: Send) {
-  const words = REQUESTS[requestKind] ?? demoRequest;
+async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: FlightSource, requestKind: string, send: Send) {
+  const source = SOURCES[flights];
+  const words = source.requests[requestKind] ?? source.requests.precise;
+  const allowWeb = flights === 'web';
   const profile = findProfile(profileId);
   if (!profile) throw new Error(`Unknown agent profile ${profileId}`);
-  const agent = agentFor(profileId);
-  const scenario = `real:${profile.id}`;
+  const agent = agentFor(profileId, flights);
+  const scenario = `real:${profile.id}${allowWeb ? '-web' : ''}`;
   const rail = await setupRail(mode, `scrip-agent-${Date.now()}`);
   send('log', { line: mode === 'sandbox' ? `Live on Natural's sandbox. Agent ${rail.naturalAgentId} limited to 1 cent so every payment is held for Scrip.` : 'Offline: simulated Natural.' });
-  send('log', { line: `Real agent: Claude (${profile.model}) as "${profile.label}"${allowWeb ? ', with web search' : ''}. The flight catalog and merchant are simulated.` });
+  send('log', { line: allowWeb
+    ? `Real agent: Claude (${profile.model}) as "${profile.label}", researching real flights on the live web. Flight details are what the agent read on the page it cites; the airline is not paid (Natural's test recipient stands in).`
+    : `Real agent: Claude (${profile.model}) as "${profile.label}". The flight catalog and merchant are simulated.` });
   service.onEvent = e => send('step', { scenario, type: e.type, at: e.at, line: renderTimeline([e])[0], data: e.data });
   const traceId = service.start('armaan', words);
   try {
-    const requirementsDigest = service.confirm(traceId, confirmedRequirements);
+    const requirementsDigest = service.confirm(traceId, source.requirements);
     const mandate = registry.createMandate({
       principalId: 'armaan', lineageId: agent.lineageId, authorizedVersionIds: [agent.versionId],
       fundingSourceId: 'wallet-main', scopes: ['purchase'], notBefore: '2020-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z',
       outcomeContractDigest: requirementsDigest, changePolicy: 'require_approval', approvedBy: 'armaan', approvedAt: now().toISOString(),
     });
-    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail });
+    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail, flights, webOffers: new Map() });
     const prompt = `Customer request: "${words}"`;
-    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: profile.id, model: profile.model, prompt } });
+    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: scenario.slice(5), model: profile.model, prompt } });
 
     const toolNames = new Map<string, string>();
     let final = { ok: false, turns: null as number | null, costUsd: null as number | null, summary: '' };
     const run = await runClaudeAgent({
-      prompt, systemPrompt: profile.instructions, model: profile.model,
-      mcpUrl: `http://localhost:${PORT}/mcp`, traceId, allowWeb,
+      prompt, systemPrompt: instructionsFor(profile, flights), model: profile.model,
+      mcpUrl: `http://localhost:${PORT}/mcp`, traceId, allowWeb, scripTools: scripToolsFor(flights),
+      maxTurns: allowWeb ? 40 : 24, timeoutMs: allowWeb ? 480_000 : 240_000,
       onActivity: a => {
         if (a.kind === 'tool_call' && !a.internal) { toolNames.set(a.toolUseId, a.tool); service.recordAgent(traceId, { type: 'agent_tool_call', data: { toolUseId: a.toolUseId, tool: a.tool, input: a.input } }); }
         if (a.kind === 'tool_result' && toolNames.has(a.toolUseId)) service.recordAgent(traceId, { type: 'agent_tool_result', data: { toolUseId: a.toolUseId, tool: toolNames.get(a.toolUseId) ?? '?', output: a.output.slice(0, 2000), isError: a.isError } });
@@ -135,7 +152,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/config') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      defaultMode, requests: REQUESTS, confirmed: confirmedRequirements, sandboxAvailable: Boolean(process.env.NATURAL_SANDBOX_API_KEY && process.env.NATURAL_SANDBOX_AGENT_KEY),
+      defaultMode, sources: SOURCES, sandboxAvailable: Boolean(process.env.NATURAL_SANDBOX_API_KEY && process.env.NATURAL_SANDBOX_AGENT_KEY),
       profiles: PROFILES.map(p => ({ id: p.id, label: p.label, model: p.model })),
     }));
     return;
@@ -170,7 +187,7 @@ const server = http.createServer(async (req, res) => {
     const send: Send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     try {
       const result = url.pathname === '/run-agent'
-        ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('web') === '1', url.searchParams.get('request') ?? 'precise', send)
+        ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', send)
         : await runFlightTraceDemo({
           mode,
           log: line => { if (line && !line.startsWith('  ') && !line.startsWith('──')) send('log', { line }); },

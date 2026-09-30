@@ -1,5 +1,5 @@
 /**
- * Runs Claude Code headless as a real purchasing agent. It gets Scrip's four
+ * Runs Claude Code headless as a real purchasing agent. It gets Scrip's
  * tools (over HTTP, tied to one trace) and, optionally, real web search and
  * fetch for research. No personal settings, hooks, or project files are
  * loaded: it runs in an empty temp folder with its own system prompt. Every
@@ -10,7 +10,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import { AGENT_TOOLS } from './profiles.js';
 import { type AgentActivity, parseStreamLine } from './stream-parser.js';
 
 export interface ClaudeRunOptions {
@@ -19,7 +18,10 @@ export interface ClaudeRunOptions {
   model: string;
   mcpUrl: string;
   traceId: string;
+  /** Scrip tool names (without the mcp__scrip__ prefix) the agent may call. */
+  scripTools: string[];
   allowWeb: boolean;
+  maxTurns?: number;
   onActivity: (activity: AgentActivity) => void;
   timeoutMs?: number;
 }
@@ -36,9 +38,9 @@ export async function runClaudeAgent(o: ClaudeRunOptions): Promise<{ exitCode: n
     '--mcp-config', mcpConfig, '--strict-mcp-config',
     '--setting-sources', '',
     '--tools', webTools.join(','),
-    '--allowedTools', [...AGENT_TOOLS.map(t => `mcp__scrip__${t}`), ...webTools].join(','),
+    '--allowedTools', [...o.scripTools.map(t => `mcp__scrip__${t}`), ...webTools].join(','),
     '--output-format', 'stream-json', '--verbose',
-    '--max-turns', '24',
+    '--max-turns', String(o.maxTurns ?? 24),
     '--no-session-persistence',
   ];
   const child = spawn('claude', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });

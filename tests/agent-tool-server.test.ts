@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ScripToolServer, type RunContext } from '../src/agent/tool-server.js';
 import { confirmedRequirements, demoRequest } from '../src/flights/fixtures.js';
 import { setupRail } from '../src/rails/rail-setup.js';
+import { orderFingerprint } from '../src/trace/fingerprint.js';
 import { createTraceWorld, type TraceWorld } from './helpers/trace-world.js';
 
 let world: TraceWorld;
@@ -60,5 +61,44 @@ describe('ScripToolServer', () => {
 
   it('rejects tool calls that are not tied to a run', async () => {
     expect((await call('search_flights', { from: 'JFK', to: 'SFO' }, 9, 'trc_unknown')).isError).toBe(true);
+  });
+});
+
+describe('ScripToolServer, real-web flights', () => {
+  const webRequirements = { ...confirmedRequirements, refundableOnly: false, maxTotalCents: 70000 };
+  const leg = (flight: string, from: string, to: string, day: string) => ({ flight, from, to, departAt: `${day}T08:00`, arriveAt: `${day}T11:30` });
+  const nonstop = {
+    airline: 'JetBlue', outbound: [leg('B6 415', 'JFK', 'SFO', '2026-10-16')], inbound: [leg('B6 416', 'SFO', 'JFK', '2026-10-18')],
+    totalUsd: 612.4, refundable: false, sourceUrl: 'https://www.google.com/travel/flights/example',
+  };
+
+  beforeEach(async () => {
+    world.cleanup();
+    world = createTraceWorld(orderFingerprint(webRequirements)); // mandate bound to the web run's confirmed requirements
+    const rail = await setupRail('offline', 'test-web');
+    traceId = world.service.start('armaan', 'JFK to SFO Oct 16-18, nonstop, $700 max');
+    world.service.confirm(traceId, webRequirements);
+    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: world.mandateId, rail, flights: 'web', webOffers: new Map() }]]));
+  });
+
+  it('offers no catalog search, only the tools to state, request, and pay', async () => {
+    const list = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, traceId);
+    expect((list as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)).toEqual(['state_understanding', 'request_purchase', 'pay']);
+    expect((await call('search_flights', { from: 'JFK', to: 'SFO' })).isError).toBe(true);
+  });
+
+  it('approves and pays for a real nonstop the agent found, by the id Scrip assigned', async () => {
+    const requested = await call('request_purchase', nonstop);
+    expect(requested.text).toMatch(/"approved":true/);
+    expect(requested.text).toMatch(/web-1/);
+    expect((await call('pay', { offerId: 'web-1' })).text).toMatch(/COMPLETED/);
+    expect(world.service.hasApprovedPayment(traceId)).toBe(true);
+  });
+
+  it('refuses a one-stop flight and rejects a submission with no source page', async () => {
+    const oneStop = { ...nonstop, totalUsd: 420, outbound: [leg('UA 1', 'JFK', 'DEN', '2026-10-16'), leg('UA 2', 'DEN', 'SFO', '2026-10-16')] };
+    expect((await call('request_purchase', oneStop)).text).toMatch(/refused/i);
+    expect((await call('request_purchase', { ...nonstop, sourceUrl: '' })).isError).toBe(true);
+    expect((await call('pay', { offerId: 'web-1' })).isError).toBe(true);
   });
 });

@@ -102,7 +102,16 @@ result, and message is recorded in the trace next to Scrip's checks and Natural'
 hold. Each agent version (profile instructions + model) builds a track record:
 how often it understood the request, what it misread, what was blocked, what paid.
 Try "Vague request" with the bargain agent to see it drop requirements and get
-blocked. Needs the `claude` CLI logged in. The flight catalog and merchant are simulated.
+blocked. Needs the `claude` CLI logged in.
+
+Flights come from either the demo catalog or the live web ("Real, from the web"):
+the agent researches real flights with web search and page fetches, then submits
+the one it picked (airline, flight numbers, times, price, and the page it found
+it on) to `request_purchase`. Scrip checks that submission against the confirmed
+request and gates the sandbox payment on it. Scrip does not independently verify
+web prices or schedules: the flight details are the agent's claim, with the source
+page recorded as its evidence. The airline is never paid; Natural's test recipient
+stands in.
 
 ## Docs
 

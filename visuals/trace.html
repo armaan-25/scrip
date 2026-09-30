@@ -116,6 +116,8 @@
 
 <section class="setup">
   <div class="choices">
+    <div class="choice"><span>Flights</span><div class="seg" id="flights">
+      <button data-v="web" aria-pressed="true">Real, from the web</button><button data-v="catalog" aria-pressed="false">Demo catalog</button></div></div>
     <div class="choice"><span>Agent</span><div class="seg" id="profile"></div></div>
     <div class="choice"><span>Request</span><div class="seg" id="req">
       <button data-v="precise" aria-pressed="true">Precise</button><button data-v="vague" aria-pressed="false">Vague</button></div></div>
@@ -162,23 +164,28 @@
   const FIELDS = { from: 'From', to: 'To', departOn: 'Leave', returnOn: 'Return', directOnly: 'Direct only', refundableOnly: 'Refundable', maxTotalCents: 'Budget' };
   const fmt = (f, v) => f === 'maxTotalCents' ? 'up to ' + usd(v) : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v);
   const flight = id => String(id || '').replace('offer-', '') + ' flight';
+  // Web offers are named by airline and flight numbers; demo offers by their id.
+  const offerName = o => String(o.offerId).startsWith('web-') ? `${o.carrier} ${o.outbound.map(l => l.flight).join(' + ')}` : 'the ' + flight(o.offerId);
+  const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return String(u); } };
+  const link = u => `<a href="${esc(u)}" target="_blank" rel="noopener" style="color:inherit">${esc(host(u))}</a>`;
   const NAMES = { faithful: 'Faithful agent', misreads: 'Misreads the request', switches: 'Switches flights at payment' };
   const SCRIPTED_REQUEST = 'Book NYC to SF, Oct 16 to 18. Direct only, refundable, under $600.';
-  let cfg = { requests: {}, confirmed: null, profiles: [] };
+  let cfg = { sources: {}, profiles: [] };
   let steps = {}, payments = {}, outcomes = {}, selected = null, seen = 0, approvedFp = null, source = null;
 
   /* Segmented controls: one pressed button per group */
   const value = id => $(id).querySelector('[aria-pressed="true"]')?.dataset.v;
   function setSeg(id, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
-  for (const id of ['profile', 'req', 'mode']) $(id).onclick = e => {
+  for (const id of ['flights', 'profile', 'req', 'mode']) $(id).onclick = e => {
     const b = e.target.closest('button');
     if (b && !b.disabled) { setSeg(id, b.dataset.v); brief(); }
   };
 
   function brief() {
     $('toldK').textContent = 'The agent is told, word for word';
-    $('toldV').textContent = '"Customer request: ' + (cfg.requests[value('req')] || '') + '"';
-    const c = cfg.confirmed;
+    const src = cfg.sources[value('flights')] || { requests: {} };
+    $('toldV').textContent = '"Customer request: ' + (src.requests[value('req')] || '') + '"';
+    const c = src.requirements;
     $('confirmedV').textContent = c ? `${c.from} to ${c.to}, ${c.departOn.slice(5)} to ${c.returnOn.slice(5)}, ${c.directOnly ? 'direct only' : 'stops ok'}, ${c.refundableOnly ? 'refundable' : 'any fare'}, up to ${usd(c.maxTotalCents)}` : '';
   }
 
@@ -187,10 +194,18 @@
     payment_held: 'Natural', payment_settled: 'Natural' }[t] || 'Scrip');
   const HIDDEN = new Set(['request_received', 'requirements_confirmed', 'agent_interpretation_recorded', 'hold_decision_started', 'agent_tool_result']);
   const pretty = v => { try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); } catch { return String(v); } };
-  function toolLine(d) {
+  // Returns HTML.
+  function toolLine(d, list) {
     const i = d.input || {};
-    return { search_flights: 'Searched for flights', state_understanding: 'Wrote down what it thinks the person wants',
-      request_purchase: 'Asked Scrip to buy the ' + flight(i.offerId), pay: 'Paid for the ' + flight(i.offerId) }[d.tool] || 'Used ' + d.tool;
+    const named = id => { const c = list.find(x => x.type === 'candidate_checked' && x.data.offer.offerId === id); return c ? offerName(c.data.offer) : 'the ' + flight(id); };
+    if (d.tool === 'WebSearch') return 'Searched the web: ' + esc(i.query || '');
+    if (d.tool === 'WebFetch') return 'Opened ' + (i.url ? link(i.url) : 'a page');
+    if (d.tool === 'request_purchase' && i.airline) {
+      const nums = (i.outbound || []).map(l => l.flight).join(' + ');
+      return `Asked Scrip to buy ${esc(i.airline)} ${esc(nums)} for $${esc(i.totalUsd)}` + (i.sourceUrl ? ` (found on ${link(i.sourceUrl)})` : '');
+    }
+    return esc({ search_flights: 'Searched the demo catalog', state_understanding: 'Wrote down what it thinks the person wants',
+      request_purchase: 'Asked Scrip to buy the ' + flight(i.offerId), pay: 'Paid for ' + named(i.offerId) }[d.tool] || 'Used ' + d.tool);
   }
   // Returns [tone, text, isHtml].
   function describe(s, list) {
@@ -200,7 +215,7 @@
       case 'agent_tool_call': {
         const r = list.find(x => x.type === 'agent_tool_result' && x.data.toolUseId === d.toolUseId);
         const body = `<b>Sent</b>\n${esc(pretty(d.input))}` + (r ? `\n\n<b>${r.data.isError ? 'Error' : 'Got back'}</b>\n${esc(pretty(r.data.output))}` : '');
-        return [r?.data.isError ? 'no' : '', `${esc(toolLine(d))}<details><summary>Details</summary><pre>${body}</pre></details>`, true];
+        return [r?.data.isError ? 'no' : '', `${toolLine(d, list)}<details><summary>Details</summary><pre>${body}</pre></details>`, true];
       }
       case 'agent_message': return ['said', '"' + d.text + '"'];
       case 'agent_run_finished': return ['', `Finished${d.turns !== null ? ` after ${d.turns} turns` : ''}${d.costUsd !== null ? `, $${d.costUsd.toFixed(3)} of model use` : ''}`];
@@ -208,10 +223,10 @@
         ? ['warn', 'Agent got this wrong: ' + d.differences.map(x => FIELDS[x.field] || x.field).join(', ')]
         : ['ok', 'Agent understood everything the person asked'];
       case 'candidate_checked': return d.violations.length
-        ? ['no', `The ${flight(d.offer.offerId)} (${usd(d.offer.totalCents)}) breaks the request: ` + d.violations.map(v => FIELDS[v.rule] || v.rule).join(', ')]
-        : ['ok', `The ${flight(d.offer.offerId)} (${usd(d.offer.totalCents)}) fits the request`];
+        ? ['no', `Scrip checked ${offerName(d.offer)} (${usd(d.offer.totalCents)}): breaks the request, ` + d.violations.map(v => v.detail).join('; ')]
+        : ['ok', `Scrip checked ${offerName(d.offer)} (${usd(d.offer.totalCents)}): fits the request`];
       case 'purchase_refused': return ['no', 'Blocked. No money moved.'];
-      case 'purchase_approved': return ['ok', `Approved the ${flight(d.offer.offerId)} for ${usd(d.totalCents)}`];
+      case 'purchase_approved': return ['ok', `Approved ${offerName(d.offer)} for ${usd(d.totalCents)}`];
       case 'payment_submitted': return !approvedFp || d.fingerprintTag === approvedFp
         ? ['', `Sent ${usd(d.amountCents)} through Natural`] : ['no', `Sent ${usd(d.amountCents)} through Natural, but for a different flight than approved`];
       case 'payment_held': return ['', 'Holding the payment until Scrip checks it'];
@@ -304,7 +319,7 @@
     $('run').disabled = $('scripted').disabled = true; $('status').textContent = 'Running';
     if (scripted) { $('toldK').textContent = 'Every scripted agent gets'; $('toldV').textContent = '"' + SCRIPTED_REQUEST + '"'; } else brief();
     const mode = value('mode');
-    source = new EventSource(scripted ? '/run?mode=' + mode : `/run-agent?mode=${mode}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}`);
+    source = new EventSource(scripted ? '/run?mode=' + mode : `/run-agent?mode=${mode}&flights=${value('flights')}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}`);
     source.addEventListener('step', e => {
       const s = JSON.parse(e.data);
       if (s.scenario !== selected) { selected = s.scenario; seen = 0; }
@@ -332,11 +347,12 @@
   fetch('/config').then(r => r.json()).then(c => {
     cfg = c;
     $('profile').innerHTML = c.profiles.map((p, i) => `<button data-v="${esc(p.id)}" aria-pressed="${i === 0}">${esc(p.label)}</button>`).join('');
-    for (const p of c.profiles) NAMES['real:' + p.id] = p.label;
+    for (const p of c.profiles) { NAMES['real:' + p.id] = p.label + ', demo catalog'; NAMES['real:' + p.id + '-web'] = p.label + ', real web'; }
     if (!c.sandboxAvailable) $('mode').querySelector('[data-v=sandbox]').disabled = true;
     setSeg('mode', q.get('run') || c.defaultMode);
     if (q.get('req')) setSeg('req', q.get('req'));
     if (q.get('agent')) setSeg('profile', q.get('agent'));
+    if (q.get('flights')) setSeg('flights', q.get('flights'));
     brief();
     if (q.get('run') === 'offline' || q.get('run') === 'sandbox') start(true);
     else if (q.get('agent')) start(false);
