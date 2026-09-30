@@ -7,11 +7,12 @@
  * connector releases or denies it). The fingerprint on the payment is
  * computed here from the offer Scrip stored, never supplied by the agent.
  *
- * In catalog runs the agent picks from Scrip's demo catalog by offerId. In
- * web runs it researches real flights itself and submits the one it picked,
- * with the page it found it on; Scrip stores that as the offer (web-1, ...).
- * Scrip cannot confirm a web price independently; the source URL is recorded
- * in the trace as the agent's evidence.
+ * In catalog runs the agent picks from Scrip's demo catalog by offerId and
+ * pays through a Natural approval hold. In web runs it researches real
+ * flights itself and calls checkout with the one it picked and the page it
+ * found it on. Scrip decides (blocker or observer mode, see checkout.ts),
+ * and an accepted checkout is paid as a Natural transfer to the merchant
+ * wallet. A checkout held for review waits for a person (review()).
  */
 import { paymentDescription } from '../flights/rules.js';
 import type { FlightLeg, FlightOffer, FlightRequirements } from '../flights/types.js';
@@ -23,10 +24,18 @@ import { orderFingerprint } from '../trace/fingerprint.js';
 import type { FlightTraceService } from '../trace/trace-service.js';
 import { catalog, describeOffer, findOffer } from './catalog.js';
 import type { FlightSource } from './profiles.js';
+import type { MerchantRail } from '../rails/merchant-rail.js';
+import { decideCheckout, type ScripMode } from './checkout.js';
 import { checkSource, type FetchPage, fetchPublicPage } from './source-check.js';
 
 export interface RunContext {
-  traceId: string; agent: AuthenticatedAgent; mandateId: string; rail: Rail;
+  traceId: string; agent: AuthenticatedAgent; mandateId: string;
+  /** Natural approval-hold rail, for catalog runs. */
+  rail?: Rail;
+  /** Web runs: blocker (default) acts on Scrip's decision; observer always pays and records it. */
+  scripMode?: ScripMode;
+  /** Web runs: the Natural wallet acting as the merchant. */
+  merchant?: MerchantRail;
   /** Defaults to catalog. */
   flights?: FlightSource;
   /** Offers the agent submitted from the web in this run, by Scrip-assigned id. */
@@ -52,9 +61,9 @@ const LEG = {
   required: ['flight', 'from', 'to', 'departAt', 'arriveAt'],
 };
 
-const WEB_REQUEST_PURCHASE = {
-  name: 'request_purchase',
-  description: "Ask to buy one real round trip you found on the web. Scrip checks it against the customer's confirmed requirements and approves or refuses. Returns the offerId to pay.",
+const CHECKOUT = {
+  name: 'checkout',
+  description: "Buy one real round trip you found on the web. Scrip checks it against the customer's confirmed requirements, then the payment is accepted, rejected, or held for the customer's review.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -124,7 +133,7 @@ export class ScripToolServer {
     if (method === 'ping') return reply({});
     if (method === 'tools/list') {
       const web = traceId ? this.contexts.get(traceId)?.flights === 'web' : false;
-      return reply({ tools: web ? [TOOLS[1], WEB_REQUEST_PURCHASE, TOOLS[3]] : TOOLS });
+      return reply({ tools: web ? [TOOLS[1], CHECKOUT] : TOOLS });
     }
     if (method === 'tools/call') {
       const params = obj(req.params);
@@ -140,8 +149,9 @@ export class ScripToolServer {
       switch (name) {
         case 'search_flights': return ctx.flights === 'web' ? error('Research real flights on the web instead.') : ok(catalog.map(describeOffer));
         case 'state_understanding': return this.understand(ctx, args);
-        case 'request_purchase': return await this.requestPurchase(ctx, args);
-        case 'pay': return await this.pay(ctx, args);
+        case 'request_purchase': return ctx.flights === 'web' ? error('Use checkout.') : await this.requestPurchase(ctx, args);
+        case 'pay': return ctx.flights === 'web' ? error('Use checkout.') : await this.pay(ctx, args);
+        case 'checkout': return ctx.flights === 'web' ? await this.checkout(ctx, args) : error('Use request_purchase and pay.');
         default: return error(`Unknown tool ${name}`);
       }
     } catch (e) {
@@ -164,18 +174,9 @@ export class ScripToolServer {
   }
 
   private async requestPurchase(ctx: RunContext, a: Json): Promise<Json> {
-    let offer: FlightOffer | undefined;
-    if (ctx.flights === 'web') {
-      const parsed = parseWebOffer(a, `web-${(ctx.webOffers?.size ?? 0) + 1}`);
-      if (typeof parsed === 'string') return error(parsed);
-      offer = parsed;
-      (ctx.webOffers ??= new Map()).set(offer.offerId, offer);
-      // Recorded for observability only; the agent is not told, and the purchase check below is unchanged.
-      this.service.recordSourceCheck(ctx.traceId, await checkSource(offer, String(a.sourceUrl), this.fetchPage));
-    } else {
-      offer = findOffer(String(a.offerId ?? ''));
-    }
+    const offer = findOffer(String(a.offerId ?? ''));
     if (!offer) return error(`No offer ${String(a.offerId)}`);
+    if (!ctx.rail) return error('No payment rail for this run.');
     const decision = await this.service.proposePurchase(ctx.traceId, ctx.agent, ctx.mandateId, offer, ctx.rail.naturalAgentId);
     if (decision.approved) return ok({ approved: true, offerId: offer.offerId, message: 'Purchase approved. You may now pay for this offer.' });
     return ok(ctx.refusalFeedback === 'ask_customer'
@@ -185,8 +186,9 @@ export class ScripToolServer {
 
   private async pay(ctx: RunContext, a: Json): Promise<Json> {
     const offerId = String(a.offerId ?? '');
-    const offer = ctx.flights === 'web' ? ctx.webOffers?.get(offerId) : findOffer(offerId);
+    const offer = findOffer(offerId);
     if (!offer) return error(`No offer ${String(a.offerId)}`);
+    if (!ctx.rail) return error('No payment rail for this run.');
     if (!this.service.approvedPurchase(ctx.traceId)) return error('No purchase has been approved for this request. Payment not sent.');
     const fingerprintTag = orderFingerprint(offer);
     const payment = await ctx.rail.payer.pay({
@@ -198,6 +200,59 @@ export class ScripToolServer {
     const settled = await settlePayment(this.service, connector, ctx.rail.owner, ctx.traceId, payment.paymentId, line => this.log(line ?? ''));
     const paid = settled.outcome === 'paid';
     return ok({ paymentId: payment.paymentId, status: settled.finalStatus ?? 'undecided', message: paid ? 'Payment COMPLETED.' : 'Payment was denied and not sent: it does not match the approved purchase.' });
+  }
+
+  /** Checkouts held for a person's review, by attempt id. They outlive the agent's run. */
+  private pending = new Map<string, { traceId: string; offer: FlightOffer; merchant: MerchantRail }>();
+
+  private async checkout(ctx: RunContext, a: Json): Promise<Json> {
+    if (!ctx.merchant) return error('No merchant rail for this run.');
+    const parsed = parseWebOffer(a, `web-${(ctx.webOffers?.size ?? 0) + 1}`);
+    if (typeof parsed === 'string') return error(parsed);
+    const offer = parsed;
+    (ctx.webOffers ??= new Map()).set(offer.offerId, offer);
+    const sourceUrl = String(a.sourceUrl);
+    // Everything the agent read before this checkout: search results and page summaries.
+    const research = this.service.events(ctx.traceId)
+      .flatMap(e => (e.type === 'agent_tool_result' && ['WebSearch', 'WebFetch'].includes(e.data.tool) ? [e.data.output] : [])).join('\n');
+    const mode = ctx.scripMode ?? 'blocker';
+    const verdict = decideCheckout(this.service.requirementsFor(ctx.traceId), offer, research, mode);
+    this.service.recordCandidate(ctx.traceId, { offer, violations: verdict.violations });
+    this.service.recordSourceCheck(ctx.traceId, await checkSource(offer, sourceUrl, this.fetchPage));
+    const attemptId = `${ctx.traceId}:${offer.offerId}`;
+    this.service.recordAttempt(ctx.traceId, { attemptId, offer, sourceUrl, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
+
+    if (verdict.decision === 'rejected') {
+      return ok(ctx.refusalFeedback === 'ask_customer'
+        ? { status: 'rejected', message: 'Payment rejected: it does not match what the customer confirmed. Do not try other flights. Stop and ask the customer what they need.' }
+        : { status: 'rejected', reasons: verdict.reasons, message: 'Payment rejected. No money moved.' });
+    }
+    if (verdict.decision === 'in_review') {
+      this.pending.set(attemptId, { traceId: ctx.traceId, offer, merchant: ctx.merchant });
+      return ok({ status: 'in_review', message: 'Payment is held for the customer to review. No money has moved yet. Do not retry; finish and report what you submitted.' });
+    }
+    const moved = await this.moveMoney(ctx.traceId, attemptId, offer, ctx.merchant);
+    return ok({ status: moved.status === 'COMPLETED' ? 'accepted' : 'failed', transferId: moved.transferId, message: moved.status === 'COMPLETED' ? 'Payment accepted and completed.' : `Payment failed on Natural (${moved.status}).` });
+  }
+
+  /** A person approves or denies a held checkout. Approving moves the money. */
+  async review(attemptId: string, approve: boolean, by = 'customer'): Promise<{ ok: boolean; message: string }> {
+    const held = this.pending.get(attemptId);
+    if (!held) return { ok: false, message: 'No checkout is waiting for review with that id.' };
+    this.pending.delete(attemptId);
+    this.service.recordReview(held.traceId, { attemptId, decision: approve ? 'approved' : 'denied', by });
+    if (!approve) return { ok: true, message: 'Denied. No money moved.' };
+    const moved = await this.moveMoney(held.traceId, attemptId, held.offer, held.merchant);
+    return { ok: moved.status === 'COMPLETED', message: `Approved. Natural transfer ${moved.transferId}: ${moved.status}.` };
+  }
+
+  private async moveMoney(traceId: string, attemptId: string, offer: FlightOffer, merchant: MerchantRail) {
+    const transfer = await merchant.pay({
+      amountCents: offer.totalCents, description: paymentDescription(offer), idempotencyKey: `scrip-${attemptId}`,
+      tags: { scrip_trace_id: traceId, scrip_offer: offer.offerId, scrip_order_fp: orderFingerprint(offer) },
+    });
+    this.service.recordMoneyMoved(traceId, { attemptId, transferId: transfer.transferId, amountCents: offer.totalCents, from: transfer.from, to: transfer.to, status: transfer.status });
+    return transfer;
   }
 }
 

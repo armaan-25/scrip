@@ -30,6 +30,9 @@ export function renderTimeline(events: RecordedEvent[]): string[] {
       case 'source_checked': return e.data.status === 'backed'
         ? `Source check: ${e.data.url} shows the claimed price and flights`
         : `Source check: ${e.data.status === 'unreadable' ? 'could not read' : 'NOT BACKED by'} ${e.data.url}: ${e.data.detail}`;
+      case 'payment_attempted': return `Checkout ${e.data.offer.offerId} ${usd(e.data.offer.totalCents)}: ${e.data.decision.toUpperCase().replace('_', ' ')}${e.data.mode === 'observer' && e.data.blockerDecision !== 'accepted' ? ` (observer; blocker would have: ${e.data.blockerDecision.replace('_', ' ')})` : ''}${e.data.reasons.length ? ` (${e.data.reasons.join('; ')})` : ''}`;
+      case 'payment_reviewed': return `Reviewer ${e.data.decision} checkout ${e.data.attemptId}`;
+      case 'money_moved': return `Natural transfer ${e.data.transferId}: ${usd(e.data.amountCents)} ${e.data.from} → ${e.data.to}, ${e.data.status}`;
       case 'agent_run_started': return `Real agent started: ${e.data.profile} (model ${e.data.model}, version ${e.data.agentVersionId.slice(0, 8)})`;
       case 'agent_tool_call': return `Agent called ${e.data.tool}(${JSON.stringify(e.data.input).slice(0, 160)})`;
       case 'agent_tool_result': return `${e.data.isError ? 'Tool error' : 'Tool result'} from ${e.data.tool}: ${e.data.output.slice(0, 200)}`;

@@ -44,7 +44,8 @@ export function trackRecords(traces: RecordedEvent[][]): VersionRecord[] {
         for (const d of e.data.differences) r.misread[d.field] = (r.misread[d.field] ?? 0) + 1;
       }
       if (e.type === 'agent_tool_call') r.toolCalls += 1;
-      if (e.type === 'purchase_refused') r.blockedBeforePayment += 1;
+      if (e.type === 'purchase_refused' || (e.type === 'payment_attempted' && e.data.decision === 'rejected')) r.blockedBeforePayment += 1;
+      if (e.type === 'money_moved' && e.data.status === 'COMPLETED') r.paid += 1;
       if (e.type === 'source_checked' && e.data.status !== 'unreadable') { r.sourceChecks += 1; if (e.data.status === 'backed') r.sourceBacked += 1; }
       if (e.type === 'agent_run_finished' && e.data.costUsd !== null) r.costUsd = Math.round((r.costUsd + e.data.costUsd) * 1000) / 1000;
     }

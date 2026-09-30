@@ -78,6 +78,12 @@ export class FlightTraceService {
   /** What a real agent did: runs, tool calls and results, messages. */
   recordAgent(traceId: string, event: AgentTraceEvent): void { this.append(traceId, event); }
   recordSourceCheck(traceId: string, data: Data<'source_checked'>): void { this.append(traceId, { type: 'source_checked', data }); }
+  /** Checkout path (no Natural hold): the rules check, the decision, a reviewer's call, and the money that moved. */
+  recordCandidate(traceId: string, data: Data<'candidate_checked'>): void { this.append(traceId, { type: 'candidate_checked', data }); }
+  recordAttempt(traceId: string, data: Data<'payment_attempted'>): void { this.append(traceId, { type: 'payment_attempted', data }); }
+  recordReview(traceId: string, data: Data<'payment_reviewed'>): void { this.append(traceId, { type: 'payment_reviewed', data }); }
+  recordMoneyMoved(traceId: string, data: Data<'money_moved'>): void { this.append(traceId, { type: 'money_moved', data }); }
+  requirementsFor(traceId: string): FlightRequirements { return this.confirmed(traceId).requirements; }
   recordPaymentSubmitted(traceId: string, data: Data<'payment_submitted'>): void { this.append(traceId, { type: 'payment_submitted', data }); }
   recordHold(traceId: string, data: Data<'payment_held'>): void { this.append(traceId, { type: 'payment_held', data }); }
   recordDecision(traceId: string, data: Data<'hold_decided'>): void { this.append(traceId, { type: 'hold_decided', data }); }

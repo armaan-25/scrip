@@ -25,7 +25,10 @@ import type { FlightRequirements } from '../src/flights/types.js';
 import { TaskAuthorizationManager } from '../src/lease.js';
 import type { AuthenticatedAgent } from '../src/missions/agent-identity.js';
 import { SqliteAgentRegistry } from '../src/missions/agent-registry.js';
-import { setupRail } from '../src/rails/rail-setup.js';
+import { setupMerchantRail } from '../src/rails/merchant-rail.js';
+import { type Rail, setupRail } from '../src/rails/rail-setup.js';
+import type { ScripMode } from '../src/agent/checkout.js';
+import { overview, runActivity } from '../src/trace/activity.js';
 import { renderTimeline } from '../src/trace/timeline.js';
 import type { RecordedEvent } from '../src/trace/events.js';
 import { monitorAlerts } from '../src/trace/monitors.js';
@@ -86,6 +89,7 @@ function stepSender(send: Send) {
     seen.set(scenario, events);
     send('step', { scenario, type: e.type, at: e.at, line: renderTimeline([e])[0], data: e.data });
     send('alerts', { scenario, alerts: monitorAlerts(events) });
+    send('activity', { scenario, activity: runActivity(events) });
   };
 }
 /** Search results and page summaries are kept long enough for the monitors to check claims against. */
@@ -106,7 +110,7 @@ const SOURCES: Record<FlightSource, { requirements: FlightRequirements; requests
   },
 };
 
-async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: FlightSource, requestKind: string, refusalFeedback: Feedback, send: Send) {
+async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: FlightSource, requestKind: string, refusalFeedback: Feedback, scripMode: ScripMode, send: Send) {
   const source = SOURCES[flights];
   const words = source.requests[requestKind] ?? source.requests.precise;
   const allowWeb = flights === 'web';
@@ -114,10 +118,15 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flig
   if (!profile) throw new Error(`Unknown agent profile ${profileId}`);
   const agent = agentFor(profileId, flights);
   const scenario = `real:${profile.id}${allowWeb ? '-web' : ''}`;
-  const rail = await setupRail(mode, `scrip-agent-${Date.now()}`);
-  send('log', { line: mode === 'sandbox' ? `Live on Natural's sandbox. Agent ${rail.naturalAgentId} limited to 1 cent so every payment is held for Scrip.` : 'Offline: simulated Natural.' });
+  // Web runs pay a Natural wallet acting as the merchant; catalog runs use the approval-hold rail.
+  const runId = `scrip-agent-${Date.now()}`;
+  const rail: Rail | undefined = allowWeb ? undefined : await setupRail(mode, runId);
+  const merchant = allowWeb ? setupMerchantRail(mode, runId) : undefined;
+  send('log', { line: mode === 'sandbox'
+    ? (rail ? `Live on Natural's sandbox. Agent ${rail.naturalAgentId} limited to 1 cent so every payment is held for Scrip.` : 'Live on Natural\'s sandbox. Accepted checkouts are paid as a transfer to the "Example Air (merchant)" wallet.')
+    : 'Offline: simulated Natural.' });
   send('log', { line: allowWeb
-    ? `Real agent: Claude (${profile.model}) as "${profile.label}", researching real flights on the live web. Flight details are what the agent read on the page it cites; the airline is not paid (Natural's test recipient stands in).`
+    ? `Real agent: Claude (${profile.model}) as "${profile.label}", researching real flights on the live web. Scrip is in ${scripMode} mode. No airline is paid; a Natural wallet stands in for it.`
     : `Real agent: Claude (${profile.model}) as "${profile.label}". The flight catalog and merchant are simulated.` });
   const step = stepSender(send);
   service.onEvent = e => step(scenario, e);
@@ -129,7 +138,7 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flig
       fundingSourceId: 'wallet-main', scopes: ['purchase'], notBefore: '2020-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z',
       outcomeContractDigest: requirementsDigest, changePolicy: 'require_approval', approvedBy: 'armaan', approvedAt: now().toISOString(),
     });
-    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail, flights, webOffers: new Map(), refusalFeedback });
+    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: mandate.mandateId, rail, merchant, scripMode, flights, webOffers: new Map(), refusalFeedback });
     const prompt = `Customer request: "${words}"`;
     service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: scenario.slice(5), model: profile.model, prompt, refusalFeedback } });
 
@@ -151,10 +160,12 @@ async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flig
   } finally {
     contexts.delete(traceId);
     service.onEvent = undefined;
-    try { await rail.restore(); } catch (error) { send('log', { line: `WARNING: could not restore the sandbox agent's limit: ${(error as Error).message}` }); }
+    try { await rail?.restore(); } catch (error) { send('log', { line: `WARNING: could not restore the sandbox agent's limit: ${(error as Error).message}` }); }
   }
   const events = service.events(traceId);
-  const outcome = events.some(e => e.type === 'payment_settled' && e.data.status === 'COMPLETED') ? 'paid'
+  const attempts = runActivity(events).attempts;
+  const outcome = attempts.length ? (attempts.at(-1)?.status ?? 'undecided')
+    : events.some(e => e.type === 'payment_settled' && e.data.status === 'COMPLETED') ? 'paid'
     : events.some(e => e.type === 'hold_decided' && e.data.decision === 'denied') ? 'denied_at_payment'
     : events.some(e => e.type === 'purchase_refused') ? 'blocked_before_payment' : 'undecided';
   return { scenarios: [{ name: scenario, traceId, outcome }] };
@@ -192,6 +203,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (url.pathname === '/mcp') { res.writeHead(405); res.end(); return; }
+  if (url.pathname === '/overview') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(overview(store.traceIds().map(id => store.events(id)))));
+    return;
+  }
+  if (url.pathname === '/trace') {
+    const events = store.events(url.searchParams.get('id') ?? '');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ activity: runActivity(events), alerts: monitorAlerts(events) }));
+    return;
+  }
+  if (url.pathname === '/review' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req)) as { attemptId?: unknown; approve?: unknown };
+      const result = await tools.review(String(body.attemptId ?? ''), body.approve === true);
+      res.writeHead(result.ok ? 200 : 409, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, message: (error as Error).message }));
+    }
+    return;
+  }
   if (url.pathname === '/track-record') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(trackRecords(store.traceIds().map(id => store.events(id)))));
@@ -205,7 +239,7 @@ const server = http.createServer(async (req, res) => {
     const send: Send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     try {
       const result = url.pathname === '/run-agent'
-        ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain', send)
+        ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain', url.searchParams.get('scrip') === 'observer' ? 'observer' : 'blocker', send)
         : await runFlightTraceDemo({
           mode,
           log: line => { if (line && !line.startsWith('  ') && !line.startsWith('──')) send('log', { line }); },

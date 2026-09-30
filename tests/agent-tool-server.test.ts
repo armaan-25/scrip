@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ScripToolServer, type RunContext } from '../src/agent/tool-server.js';
 import { confirmedRequirements, demoRequest } from '../src/flights/fixtures.js';
 import { setupRail } from '../src/rails/rail-setup.js';
-import { orderFingerprint } from '../src/trace/fingerprint.js';
+import { FakeMerchantRail } from '../src/rails/merchant-rail.js';
+import { runActivity } from '../src/trace/activity.js';
 import { createTraceWorld, type TraceWorld } from './helpers/trace-world.js';
 
 let world: TraceWorld;
@@ -64,45 +65,73 @@ describe('ScripToolServer', () => {
   });
 });
 
-describe('ScripToolServer, real-web flights', () => {
+describe('ScripToolServer, real-web checkout', () => {
   const webRequirements = { ...confirmedRequirements, refundableOnly: false, maxTotalCents: 70000 };
   const leg = (flight: string, from: string, to: string, day: string) => ({ flight, from, to, departAt: `${day}T08:00`, arriveAt: `${day}T11:30` });
   const nonstop = {
     airline: 'JetBlue', outbound: [leg('B6 415', 'JFK', 'SFO', '2026-10-16')], inbound: [leg('B6 416', 'SFO', 'JFK', '2026-10-18')],
     totalUsd: 612.4, refundable: false, sourceUrl: 'https://www.google.com/travel/flights/example',
   };
-
-  beforeEach(async () => {
-    world.cleanup();
-    world = createTraceWorld(orderFingerprint(webRequirements)); // mandate bound to the web run's confirmed requirements
-    const rail = await setupRail('offline', 'test-web');
+  let merchant: FakeMerchantRail;
+  const research = (text: string) => {
+    world.service.recordAgent(traceId, { type: 'agent_tool_call', data: { toolUseId: 'r1', tool: 'WebFetch', input: { url: 'https://www.jetblue.com' } } });
+    world.service.recordAgent(traceId, { type: 'agent_tool_result', data: { toolUseId: 'r1', tool: 'WebFetch', output: text, isError: false } });
+  };
+  const setup = (scripMode: 'blocker' | 'observer') => {
+    merchant = new FakeMerchantRail();
     traceId = world.service.start('armaan', 'JFK to SFO Oct 16-18, nonstop, $700 max');
     world.service.confirm(traceId, webRequirements);
-    const page = async () => ({ status: 200, text: `<html><body>${'JetBlue nonstop New York to San Francisco. '.repeat(10)} B6 415 and B6 416, round trip $612.40</body></html>` });
-    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: world.mandateId, rail, flights: 'web', webOffers: new Map() }]]), () => {}, page);
-  });
+    const page = async () => ({ status: 403, text: '' });
+    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: world.mandateId, merchant, scripMode, flights: 'web', webOffers: new Map() }]]), () => {}, page);
+  };
+  const attempt = () => runActivity(world.service.events(traceId)).attempts.at(-1);
 
-  it('offers no catalog search, only the tools to state, request, and pay', async () => {
+  it('offers only the tools to state an understanding and check out', async () => {
+    setup('blocker');
     const list = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, traceId);
-    expect((list as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)).toEqual(['state_understanding', 'request_purchase', 'pay']);
+    expect((list as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)).toEqual(['state_understanding', 'checkout']);
     expect((await call('search_flights', { from: 'JFK', to: 'SFO' })).isError).toBe(true);
   });
 
-  it('approves and pays for a real nonstop the agent found, by the id Scrip assigned', async () => {
-    const requested = await call('request_purchase', nonstop);
-    expect(requested.text).toMatch(/"approved":true/);
-    expect(requested.text).toMatch(/web-1/);
-    expect((await call('pay', { offerId: 'web-1' })).text).toMatch(/COMPLETED/);
-    expect(world.service.hasApprovedPayment(traceId)).toBe(true);
-    const check = world.service.events(traceId).find(e => e.type === 'source_checked');
-    expect(check?.type === 'source_checked' && check.data.status).toBe('backed');
+  it('blocker: accepts and pays the merchant wallet when the claim is in what the agent read', async () => {
+    setup('blocker');
+    research('JetBlue B6 415 out, B6 416 back, round trip $612.40');
+    expect((await call('checkout', nonstop)).text).toMatch(/"status":"accepted"/);
+    expect(merchant.transfers).toMatchObject([{ status: 'COMPLETED', amountCents: 61240, to: 'Example Air (merchant)' }]);
+    expect(attempt()).toMatchObject({ status: 'accepted', transferStatus: 'COMPLETED' });
   });
 
-  it('refuses a one-stop flight and rejects a submission with no source page', async () => {
+  it("blocker: holds a checkout for review when the price never appeared in the agent's research", async () => {
+    setup('blocker');
+    research('JFK-SFO 10/16 from $234. SFO-JFK 10/18 from $334. B6 415, B6 416.');
+    expect((await call('checkout', nonstop)).text).toMatch(/in_review/);
+    expect(merchant.transfers).toEqual([]);
+    expect(attempt()).toMatchObject({ status: 'in_review', reasons: ['not found in anything the agent read: price $612.40'] });
+    expect(await server.review(attempt()?.attemptId ?? '', true)).toMatchObject({ ok: true });
+    expect(merchant.transfers).toHaveLength(1);
+    expect(attempt()).toMatchObject({ status: 'approved', transferStatus: 'COMPLETED' });
+    expect((await server.review(attempt()?.attemptId ?? '', true)).ok).toBe(false); // cannot be approved twice
+  });
+
+  it('blocker: rejects a flight that breaks the request, and a denied review moves nothing', async () => {
+    setup('blocker');
     const oneStop = { ...nonstop, totalUsd: 420, outbound: [leg('UA 1', 'JFK', 'DEN', '2026-10-16'), leg('UA 2', 'DEN', 'SFO', '2026-10-16')] };
-    expect((await call('request_purchase', oneStop)).text).toMatch(/refused/i);
-    expect((await call('request_purchase', { ...nonstop, sourceUrl: '' })).isError).toBe(true);
-    expect((await call('pay', { offerId: 'web-1' })).isError).toBe(true);
+    expect((await call('checkout', oneStop)).text).toMatch(/rejected/);
+    expect(attempt()?.status).toBe('rejected');
+    expect(merchant.transfers).toEqual([]);
+    expect((await call('checkout', { ...nonstop, sourceUrl: '' })).isError).toBe(true);
+    await call('checkout', nonstop); // price never seen: held
+    await server.review(attempt()?.attemptId ?? '', false);
+    expect(attempt()?.status).toBe('denied');
+    expect(merchant.transfers).toEqual([]);
+  });
+
+  it('observer: always pays, and records what the blocker would have done', async () => {
+    setup('observer');
+    const oneStop = { ...nonstop, totalUsd: 420, outbound: [leg('UA 1', 'JFK', 'DEN', '2026-10-16'), leg('UA 2', 'DEN', 'SFO', '2026-10-16')] };
+    expect((await call('checkout', oneStop)).text).toMatch(/accepted/);
+    expect(attempt()).toMatchObject({ status: 'accepted', mode: 'observer', blockerDecision: 'rejected' });
+    expect(merchant.transfers).toHaveLength(1);
   });
 });
 

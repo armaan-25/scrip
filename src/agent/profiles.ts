@@ -3,8 +3,8 @@
  * is a distinct agent *version*: its model, instructions, and tools are
  * fingerprinted into a manifest, so Scrip tracks a separate record for each.
  *   catalog  the agent searches Scrip's demo catalog (search_flights)
- *   web      the agent researches real flights on the live web, then submits
- *            the one it picked to request_purchase with its source page
+ *   web      the agent researches real flights on the live web, then calls
+ *            checkout with the one it picked and its source page
  */
 import type { AgentManifest } from '../missions/agent-identity.js';
 import { orderFingerprint } from '../trace/fingerprint.js';
@@ -24,9 +24,9 @@ const WEB_PROCESS = `You buy flights for a customer. Research real flights on th
 Follow this process:
 1. Search the web for real round trips matching the trip. Use only flights, times, and prices you actually saw on a page. Never invent flight numbers, times, or prices. Keep research brief: about 8 searches or page fetches at most.
 2. Call state_understanding with your understanding of what the customer requires, as structured fields.
-3. Pick one real round trip and call request_purchase with its airline, each flight's number, airports, and local departure and arrival times, the total round-trip price in USD for one adult, whether the fare is refundable (false unless the page says it is), and the URL of the page where you found it. Scrip checks it against the customer's confirmed requirements.
-4. If approved, call pay with the offerId Scrip returns. If refused, do not pay that flight; you may pick a different real flight and request it, or stop and explain.
-5. Finish with a one-paragraph summary of what you bought (or why not), including the source page.`;
+3. Pick one real round trip and call checkout with its airline, each flight's number, airports, and local departure and arrival times, the total round-trip price in USD for one adult, whether the fare is refundable (false unless the page says it is), and the URL of the page where you found it.
+4. Checkout returns accepted (paid), rejected (no money moved; you may pick a different real flight and check out again, or stop and explain), or in_review (held for the customer; stop, do not retry).
+5. Finish with a one-paragraph summary of what you submitted and what happened, including the source page.`;
 
 export const PROFILES: AgentProfile[] = [
   {
@@ -49,7 +49,7 @@ export function instructionsFor(profile: AgentProfile, source: FlightSource): st
 
 /** Scrip tools the agent may call. Web runs research with the CLI's own web tools instead of search_flights. */
 export function scripToolsFor(source: FlightSource): string[] {
-  return source === 'web' ? ['state_understanding', 'request_purchase', 'pay'] : ['search_flights', 'state_understanding', 'request_purchase', 'pay'];
+  return source === 'web' ? ['state_understanding', 'checkout'] : ['search_flights', 'state_understanding', 'request_purchase', 'pay'];
 }
 
 export function manifestFor(profile: AgentProfile, source: FlightSource): AgentManifest {

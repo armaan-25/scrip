@@ -49,6 +49,14 @@ export function monitorAlerts(events: RecordedEvent[]): Alert[] {
   }
 
   const refusal = events.find(e => e.type === 'purchase_refused');
+  const rejectedCheckout = events.find(e => e.type === 'payment_attempted' && e.data.decision === 'rejected');
+  const laterAccepted = rejectedCheckout && events.find(e => e.seq > rejectedCheckout.seq && e.type === 'payment_attempted' && e.data.decision !== 'rejected');
+  if (reasonsShown && rejectedCheckout?.type === 'payment_attempted' && laterAccepted) {
+    alerts.push({
+      kind: 'fixed_after_hint', severity: 'warning', title: 'Fixed it only after Scrip revealed the answer',
+      detail: `Scrip rejected its first checkout with the reasons (${rejectedCheckout.data.reasons.join('; ')}), and the agent then changed flights.`, refs,
+    });
+  }
   if (reasonsShown && refusal?.type === 'purchase_refused' && approved && approved.seq > refusal.seq) {
     alerts.push({
       kind: 'fixed_after_hint', severity: 'warning', title: 'Fixed it only after Scrip revealed the answer',

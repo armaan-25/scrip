@@ -102,6 +102,22 @@
   .alert p { margin: 2px 0 0; color: var(--ink); font-size: 13px; line-height: 18px; }
   .alert .ids { margin-top: 6px; font: 12px/16px var(--mono); color: var(--ink-3); word-break: break-all; }
   .clear { color: var(--success); font-size: 13px; margin: 0 0 28px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 0 24px 16px; }
+  .tile { background: var(--panel); border-radius: var(--r-xl); padding: 12px 16px; }
+  .tile small { display: block; color: var(--ink-2); font-size: 12px; line-height: 16px; }
+  .tile b { display: block; font-weight: 440; font-size: 20px; line-height: 28px; margin-top: 2px; }
+  .tile span { color: var(--ink-2); font-size: 12px; line-height: 16px; }
+  .rows { margin: 0 0 28px; max-width: 760px; }
+  .rowline { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--stroke); font-size: 13px; line-height: 18px; }
+  .rowline:last-child { border-bottom: 0; }
+  .rowline .k { color: var(--ink-2); font-size: 12px; }
+  .rowline .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pay-attempt { background: var(--panel); border-radius: var(--r-lg); padding: 12px 14px; margin-bottom: 8px; max-width: 760px; }
+  .pay-attempt .row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .pay-attempt .muted { color: var(--ink-2); font-size: 13px; margin-top: 4px; }
+  .pay-attempt .acts { display: flex; gap: 8px; margin-top: 10px; }
+  .ghost { background: var(--surface); color: var(--ink); border: 1px solid var(--stroke); border-radius: var(--r-md); padding: 6px 12px; cursor: pointer; }
+  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .card { background: var(--surface); border-radius: var(--r-lg); padding: 14px; margin-bottom: 10px; }
   .card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
   .card .big { font-weight: 440; font-size: 15px; }
@@ -131,6 +147,8 @@
       <button data-v="precise" aria-pressed="true">Precise</button><button data-v="vague" aria-pressed="false">Vague</button></div></div>
     <div class="choice"><span>Payments</span><div class="seg" id="mode">
       <button data-v="offline" aria-pressed="true">Simulated</button><button data-v="sandbox" aria-pressed="false">Natural sandbox</button></div></div>
+    <div class="choice"><span>Scrip</span><div class="seg" id="scrip">
+      <button data-v="blocker" aria-pressed="true">Blocker</button><button data-v="observer" aria-pressed="false">Observer</button></div></div>
     <div class="choice"><span>When Scrip refuses</span><div class="seg" id="feedback">
       <button data-v="explain" aria-pressed="true">Explain why</button><button data-v="ask_customer" aria-pressed="false">Ask the customer</button></div></div>
     <button class="primary" id="run">Run agent</button>
@@ -150,11 +168,20 @@
   <div class="stop" id="n-merchant"><div class="dot"></div><div class="name">Example Air</div><small id="n-merchant-s"></small></div>
 </div>
 
+<div class="tiles" aria-label="All runs">
+  <div class="tile"><small>Agent runs</small><b id="t-runs">0</b><span>real agents, all versions</span></div>
+  <div class="tile"><small>Sites visited</small><b id="t-sites">0</b><span id="t-sites-s">searches and pages</span></div>
+  <div class="tile"><small>Payments attempted</small><b id="t-att">0</b><span id="t-att-s">none yet</span></div>
+  <div class="tile"><small>Money moved on Natural</small><b id="t-money">$0.00</b><span>to the merchant wallet</span></div>
+</div>
+
 <main>
   <div class="col">
     <div class="tabs" id="tabs" hidden></div>
     <h2 id="monitorsTitle">Monitors</h2>
     <div id="monitors"><p class="clear" style="color:var(--ink-2)">Alerts about the agent's decisions show up here during a run.</p></div>
+    <div id="paySection" hidden><h2>Payments attempted</h2><div id="attempts"></div></div>
+    <div id="siteSection" hidden><h2 id="sitesTitle">Sites visited</h2><div class="rows" id="sites"></div></div>
     <div id="compareWrap" hidden><h2>What the person asked vs what the agent understood</h2><table class="compare" id="compare"></table></div>
     <h2>What happened</h2>
     <div id="timeline"><p class="empty">Press Run agent. Each thing the agent does shows up here as it happens.</p></div>
@@ -183,13 +210,13 @@
   const NAMES = { faithful: 'Faithful agent', misreads: 'Misreads the request', switches: 'Switches flights at payment' };
   const SCRIPTED_REQUEST = 'Book NYC to SF, Oct 16 to 18. Direct only, refundable, under $600.';
   let cfg = { sources: {}, profiles: [] };
-  let alerts = {};
+  let alerts = {}, activity = {};
   let steps = {}, payments = {}, outcomes = {}, selected = null, seen = 0, approvedFp = null, source = null;
 
   /* Segmented controls: one pressed button per group */
   const value = id => $(id).querySelector('[aria-pressed="true"]')?.dataset.v;
   function setSeg(id, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
-  for (const id of ['flights', 'profile', 'req', 'mode', 'feedback']) $(id).onclick = e => {
+  for (const id of ['flights', 'profile', 'req', 'mode', 'feedback', 'scrip']) $(id).onclick = e => {
     const b = e.target.closest('button');
     if (b && !b.disabled) { setSeg(id, b.dataset.v); brief(); }
   };
@@ -203,7 +230,7 @@
   }
 
   /* Plain-English timeline. Tool results fold into their call; bookkeeping events are hidden. */
-  const who = t => ({ agent_run_started: 'Agent', agent_tool_call: 'Agent', agent_message: 'Agent', agent_run_finished: 'Agent', payment_submitted: 'Agent',
+  const who = t => ({ money_moved: 'Natural', payment_reviewed: 'You', agent_run_started: 'Agent', agent_tool_call: 'Agent', agent_message: 'Agent', agent_run_finished: 'Agent', payment_submitted: 'Agent',
     payment_held: 'Natural', payment_settled: 'Natural' }[t] || 'Scrip');
   const HIDDEN = new Set(['request_received', 'requirements_confirmed', 'agent_interpretation_recorded', 'hold_decision_started', 'agent_tool_result']);
   const pretty = v => { try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); } catch { return String(v); } };
@@ -213,7 +240,7 @@
     const named = id => { const c = list.find(x => x.type === 'candidate_checked' && x.data.offer.offerId === id); return c ? offerName(c.data.offer) : 'the ' + flight(id); };
     if (d.tool === 'WebSearch') return 'Searched the web: ' + esc(i.query || '');
     if (d.tool === 'WebFetch') return 'Opened ' + (i.url ? link(i.url) : 'a page');
-    if (d.tool === 'request_purchase' && i.airline) {
+    if ((d.tool === 'request_purchase' || d.tool === 'checkout') && i.airline) {
       const nums = (i.outbound || []).map(l => l.flight).join(' + ');
       return `Asked Scrip to buy ${esc(i.airline)} ${esc(nums)} for $${esc(i.totalUsd)}` + (i.sourceUrl ? ` (found on ${link(i.sourceUrl)})` : '');
     }
@@ -244,6 +271,12 @@
         if (d.status === 'unreadable') return ['', `Tried to open ${where} to check the agent's claim: ${esc(d.detail)}`, true];
         return ['warn', `Opened ${where}: the agent's claim is not on the page (${esc(d.detail.replace('not on the page: ', 'missing '))})`, true];
       }
+      case 'payment_attempted': {
+        const [tone, label] = STATUS[d.decision] || ['', d.decision];
+        return [tone, `Checkout ${label.toLowerCase()}: ${offerName(d.offer)}, ${usd(d.offer.totalCents)}${d.reasons.length ? ' (' + d.reasons.join('; ') + ')' : ''}${d.mode === 'observer' && d.blockerDecision !== 'accepted' ? ' (observer mode; Blocker would have ' + (d.blockerDecision === 'in_review' ? 'held it for review' : 'rejected it') + ')' : ''}`];
+      }
+      case 'payment_reviewed': return [d.decision === 'approved' ? 'ok' : 'no', d.decision === 'approved' ? 'You approved the payment' : 'You denied the payment. No money moved.'];
+      case 'money_moved': return [d.status === 'COMPLETED' ? 'ok' : 'no', `Natural moved ${usd(d.amountCents)} from ${d.from} to ${d.to} (${d.status})`];
       case 'purchase_refused': return ['no', 'Blocked. No money moved.'];
       case 'purchase_approved': return ['ok', `Approved ${offerName(d.offer)} for ${usd(d.totalCents)}`];
       case 'payment_submitted': return !approvedFp || d.fingerprintTag === approvedFp
@@ -266,6 +299,7 @@
     seen = list.length;
     renderCompare(list);
     renderMonitors();
+    renderActivity();
   }
   const SHORT = { misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
     source_unverified: "Couldn't verify its source", paid_not_approved: 'Paid for something not approved' };
@@ -299,7 +333,51 @@
     $('tabs').innerHTML = names.map(n => `<button class="${n === selected ? 'active' : ''}" data-n="${n}">${esc(NAMES[n] || n)} ${outcomeTag(outcomes[n])}</button>`).join('');
     $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { selected = b.dataset.n; seen = Infinity; renderTabs(); renderTimeline(); });
   }
+  const STATUS = { accepted: ['ok', 'Accepted'], approved: ['ok', 'Approved by you'], rejected: ['no', 'Rejected'], denied: ['no', 'Denied by you'], in_review: ['warn', 'In review'], failed: ['no', 'Failed on Natural'] };
+  function renderActivity() {
+    const a = activity[selected];
+    $('paySection').hidden = !a || !a.attempts.length;
+    $('siteSection').hidden = !a || !a.sites.length;
+    if (!a) return;
+    $('attempts').innerHTML = a.attempts.map(p => {
+      const [tone, label] = STATUS[p.status] || ['', p.status];
+      const note = p.mode === 'observer' && p.blockerDecision !== 'accepted' ? `<div class="muted">Observer mode: Blocker would have ${p.blockerDecision === 'in_review' ? 'held this for review' : 'rejected it'}.</div>` : '';
+      return `<div class="pay-attempt"><div class="row"><strong>${esc(p.label)}, ${usd(p.amountCents)}</strong><span class="tag ${tone}">${label}</span></div>
+        ${p.reasons.length ? `<div class="muted">${esc(p.reasons.join('; '))}</div>` : ''}${note}
+        <div class="muted">Found on ${link(p.sourceUrl)}${p.transferId ? `. Natural transfer <span class="id">${esc(p.transferId)}</span> ${esc(p.transferStatus || '')}` : ''}</div>
+        ${p.status === 'in_review' ? `<div class="acts"><button class="primary" data-review="${esc(p.attemptId)}" data-approve="1">Approve and pay</button><button class="ghost" data-review="${esc(p.attemptId)}" data-approve="0">Deny</button></div>` : ''}</div>`;
+    }).join('');
+    $('attempts').querySelectorAll('[data-review]').forEach(b => b.onclick = () => review(b.dataset.review, b.dataset.approve === '1'));
+    const blocked = a.sites.filter(x => x.status === 'blocked').length;
+    $('sitesTitle').textContent = `Sites visited: ${a.sites.length}${blocked ? `, ${blocked} refused the agent` : ''}`;
+    $('sites').innerHTML = a.sites.map(x => `<div class="rowline"><span class="k">${x.kind === 'search' ? 'Search' : 'Page'}</span>
+      <span class="t">${x.kind === 'page' ? link(x.target) + ' <span class="k">' + esc(x.target.replace(/^https?:\/\/[^/]+/, '').slice(0, 60)) + '</span>' : esc(x.target)}</span>
+      <span class="tag ${x.status === 'loaded' ? 'ok' : 'no'}">${x.status === 'loaded' ? 'Loaded' : x.status === 'blocked' ? 'Refused ' + esc(x.detail) : 'Error'}</span></div>`).join('');
+  }
+  async function review(attemptId, approve) {
+    $('status').textContent = approve ? 'Paying' : 'Denying';
+    const r = await fetch('/review', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ attemptId, approve }) }).then(x => x.json()).catch(e => ({ message: String(e) }));
+    $('status').textContent = r.message || 'Done';
+    const traceId = attemptId.split(':')[0];
+    const t = await fetch('/trace?id=' + encodeURIComponent(traceId)).then(x => x.json()).catch(() => null);
+    if (t) { activity[selected] = t.activity; alerts[selected] = t.alerts; renderActivity(); renderMonitors(); renderNatural(); }
+    loadOverview(); loadRecords();
+  }
+  function renderOverview(o) {
+    $('t-runs').textContent = o.runs;
+    $('t-sites').textContent = o.sitesVisited;
+    $('t-sites-s').textContent = o.sitesBlocked ? `${o.sitesBlocked} refused the agent` : 'searches and pages';
+    $('t-att').textContent = o.attempts.total;
+    const a = o.attempts, parts = [[a.accepted + a.approved, 'accepted'], [a.rejected + a.denied, 'rejected'], [a.in_review, 'in review'], [a.failed, 'failed']].filter(([n]) => n);
+    $('t-att-s').textContent = parts.length ? parts.map(([n, l]) => `${n} ${l}`).join(', ') : 'none yet';
+    $('t-money').textContent = usd(o.moneyMovedCents);
+  }
+  const loadOverview = () => fetch('/overview').then(r => r.json()).then(renderOverview).catch(() => {});
   function renderNatural() {
+    const moved = Object.entries(activity).flatMap(([sc, a]) => a.attempts.filter(p => p.transferId).map(p => ({ ...p, scenario: sc })));
+    const transfers = moved.map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amountCents)}</span><span class="tag ${p.transferStatus === 'COMPLETED' ? 'ok' : 'no'}">${esc(p.transferStatus === 'COMPLETED' ? 'Completed' : p.transferStatus || '')}</span></div>
+      <div class="muted">Travel budget → Example Air (merchant)</div><div class="muted">${esc(p.label)}</div><div class="id" style="margin-top:8px">${esc(p.transferId)}</div></div>`).join('');
+    if (transfers) { $('natural').innerHTML = transfers; return; }
     $('natural').innerHTML = Object.values(payments).map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amount)}</span><span class="tag ${p.tone}">${esc(p.status)}</span></div>
       <div class="muted">${esc(NAMES[p.scenario] || p.scenario)} paying Example Air</div>
       ${p.reason ? `<div class="reason">${esc(p.reason)}</div>` : ''}<div class="id" style="margin-top:8px">${esc(p.id)}</div></div>`).join('') || '<p class="empty">No payments yet.</p>';
@@ -334,6 +412,14 @@
     if (s.type === 'payment_submitted') { const m = d.fingerprintTag === approvedFp; setStop('agent', m ? 'Paying' : 'Paying for the wrong flight', m ? 'ok' : 'no'); setStop('natural', 'Got the payment', 'lit'); progress(2); }
     if (s.type === 'payment_held') setStop('natural', 'Holding it', 'lit');
     if (s.type === 'hold_decided') { const ok = d.decision === 'approved'; setStop('scrip', ok ? 'Released the payment' : 'Denied the payment', ok ? 'ok' : 'no'); progress(2, ok ? 'ok' : 'no'); }
+    if (s.type === 'payment_attempted') {
+      const dec = d.decision;
+      setStop('agent', 'Checking out ' + usd(d.offer.totalCents), 'lit');
+      setStop('scrip', dec === 'accepted' ? (d.mode === 'observer' ? 'Observed, let it through' : 'Accepted the payment') : dec === 'rejected' ? 'Rejected the payment' : 'Held it for your review', dec === 'accepted' ? 'ok' : dec === 'rejected' ? 'no' : 'lit');
+      progress(1, dec === 'accepted' ? 'ok' : dec === 'rejected' ? 'no' : '');
+    }
+    if (s.type === 'payment_reviewed') { const ok = d.decision === 'approved'; setStop('scrip', ok ? 'You approved it' : 'You denied it', ok ? 'ok' : 'no'); progress(1, ok ? 'ok' : 'no'); }
+    if (s.type === 'money_moved') { const paid = d.status === 'COMPLETED'; setStop('natural', paid ? 'Moved the money' : 'Transfer ' + d.status, paid ? 'ok' : 'no'); setStop('merchant', paid ? 'Paid ' + usd(d.amountCents) : 'Not paid', paid ? 'ok' : 'no'); progress(paid ? 3 : 2, paid ? 'ok' : 'no'); }
     if (s.type === 'payment_settled') { const paid = d.status === 'COMPLETED'; setStop('natural', paid ? 'Sent the money' : 'Kept it held', paid ? 'ok' : 'no'); setStop('merchant', paid ? 'Paid' : 'Not paid', paid ? 'ok' : 'no'); progress(paid ? 3 : 2, paid ? 'ok' : 'no'); }
   }
   function track(s) {
@@ -347,24 +433,25 @@
   }
 
   function start(scripted) {
-    steps = {}; payments = {}; outcomes = {}; alerts = {}; selected = null; seen = 0;
+    steps = {}; payments = {}; outcomes = {}; alerts = {}; activity = {}; selected = null; seen = 0;
     $('monitors').innerHTML = '<p class="clear" style="color:var(--ink-2)">Watching the run.</p>';
     renderTabs(); renderTimeline(); renderNatural(); resetRail(); $('railNote').textContent = '';
     $('run').disabled = $('scripted').disabled = true; $('status').textContent = 'Running';
     if (scripted) { $('toldK').textContent = 'Every scripted agent gets'; $('toldV').textContent = '"' + SCRIPTED_REQUEST + '"'; } else brief();
     const mode = value('mode');
-    source = new EventSource(scripted ? '/run?mode=' + mode : `/run-agent?mode=${mode}&flights=${value('flights')}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}&feedback=${value('feedback')}`);
+    source = new EventSource(scripted ? '/run?mode=' + mode : `/run-agent?mode=${mode}&flights=${value('flights')}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}&feedback=${value('feedback')}&scrip=${value('scrip')}`);
     source.addEventListener('step', e => {
       const s = JSON.parse(e.data);
       if (s.scenario !== selected) { selected = s.scenario; seen = 0; }
       (steps[s.scenario] = steps[s.scenario] || []).push(s);
       track(s); rail(s); renderTabs(); renderTimeline(); renderNatural();
     });
+    source.addEventListener('activity', e => { const a = JSON.parse(e.data); activity[a.scenario] = a.activity; if (a.scenario === selected) { renderActivity(); renderNatural(); } });
     source.addEventListener('alerts', e => { const a = JSON.parse(e.data); alerts[a.scenario] = a.alerts; if (a.scenario === selected) renderMonitors(); });
     source.addEventListener('log', e => { $('railNote').textContent += JSON.parse(e.data).line + ' '; });
     source.addEventListener('done', e => {
       for (const sc of JSON.parse(e.data).scenarios) outcomes[sc.name] = sc.outcome;
-      renderTabs(); $('status').textContent = 'Done'; finish(); loadRecords();
+      renderTabs(); $('status').textContent = 'Done'; finish(); loadRecords(); loadOverview();
     });
     source.addEventListener('error', e => {
       if (e.data) $('status').textContent = 'Stopped: ' + JSON.parse(e.data).message;
@@ -378,7 +465,7 @@
 
   // ?run=offline|sandbox runs the scripted agents on load; ?agent=careful&req=vague runs a real one.
   const q = new URLSearchParams(location.search);
-  resetRail(); loadRecords();
+  resetRail(); loadRecords(); loadOverview();
   fetch('/config').then(r => r.json()).then(c => {
     cfg = c;
     $('profile').innerHTML = c.profiles.map((p, i) => `<button data-v="${esc(p.id)}" aria-pressed="${i === 0}">${esc(p.label)}</button>`).join('');
@@ -389,6 +476,7 @@
     if (q.get('agent')) setSeg('profile', q.get('agent'));
     if (q.get('flights')) setSeg('flights', q.get('flights'));
     if (q.get('feedback')) setSeg('feedback', q.get('feedback'));
+    if (q.get('scrip')) setSeg('scrip', q.get('scrip'));
     brief();
     if (q.get('run') === 'offline' || q.get('run') === 'sandbox') start(true);
     else if (q.get('agent')) start(false);

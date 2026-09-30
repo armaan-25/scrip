@@ -104,14 +104,23 @@ how often it understood the request, what it misread, what was blocked, what pai
 Try "Vague request" with the bargain agent to see it drop requirements and get
 blocked. Needs the `claude` CLI logged in.
 
-Flights come from either the demo catalog or the live web ("Real, from the web"):
-the agent researches real flights with web search and page fetches, then submits
-the one it picked (airline, flight numbers, times, price, and the page it found
-it on) to `request_purchase`. Scrip checks that submission against the confirmed
-request and gates the sandbox payment on it. Scrip does not independently verify
-web prices or schedules: the flight details are the agent's claim, with the source
-page recorded as its evidence. The airline is never paid; Natural's test recipient
-stands in.
+Flights come from either the demo catalog or the live web ("Real, from the web").
+In web runs the agent researches real flights with web search and page fetches,
+then calls `checkout` with the one it picked (airline, flight numbers, times,
+price, and the page it found it on). Scrip decides (`src/agent/checkout.ts`):
+
+- **rejected:** the flight breaks what the person confirmed; no money moves.
+- **in review:** the claimed price or flight numbers never appeared in anything
+  the agent read; the page shows Approve / Deny, and approving pays.
+- **accepted:** paid as a real Natural sandbox transfer from the payer's wallet
+  to a wallet named "Example Air (merchant)" (`src/rails/merchant-rail.ts`).
+
+The **Scrip** switch picks **Blocker** (act on the decision) or **Observer**
+(always pay, record what Blocker would have done). The page shows totals across
+runs (sites visited and how many refused the agent, payments attempted by status,
+money moved) and, per run, every site visited, every payment attempt, and the
+Natural transfer (`src/trace/activity.ts`). No airline is paid: web prices are
+the agent's claim, and a Natural wallet stands in for the merchant.
 
 **Monitors** read each run's trace and raise alerts about the decision behind the
 payment (`src/trace/monitors.ts`): misread the request; fixed it only after Scrip's
