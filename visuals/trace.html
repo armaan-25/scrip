@@ -102,6 +102,13 @@
   .alert p { margin: 2px 0 0; color: var(--ink); font-size: 13px; line-height: 18px; }
   .alert .ids { margin-top: 6px; font: 12px/16px var(--mono); color: var(--ink-3); word-break: break-all; }
   .clear { color: var(--success); font-size: 13px; margin: 0 0 28px; }
+  .taskbox { display: grid; grid-template-columns: minmax(0, 2fr) 140px minmax(0, 1.4fr); gap: 10px; }
+  .taskbox label { display: grid; gap: 6px; color: var(--ink-2); font-size: 13px; }
+  .taskbox textarea, .taskbox input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--stroke); border-radius: var(--r-md); padding: 8px 10px; resize: vertical; }
+  .taskbox textarea { min-height: 64px; }
+  .checks { margin: 6px 0 0; padding: 0; list-style: none; font-size: 13px; line-height: 18px; }
+  .checks li { margin-top: 2px; } .checks .yes { color: var(--success); } .checks .no { color: var(--error); } .checks .unsure { color: var(--warning); }
+  @media (max-width: 900px) { .taskbox { grid-template-columns: 1fr; } }
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 0 24px 16px; }
   .tile { background: var(--panel); border-radius: var(--r-xl); padding: 12px 16px; }
   .tile small { display: block; color: var(--ink-2); font-size: 12px; line-height: 16px; }
@@ -136,12 +143,13 @@
 </style>
 </head>
 <body>
-<div class="bar"><div><strong>Scrip</strong><span class="sub">Watch an AI agent try to buy a flight</span></div><span id="status" role="status">Ready</span></div>
+<div class="bar"><div><strong>Scrip</strong><span class="sub">Watch an AI agent buy something with money</span></div><span id="status" role="status">Ready</span></div>
 
 <section class="setup">
   <div class="choices">
-    <div class="choice"><span>Flights</span><div class="seg" id="flights">
-      <button data-v="web" aria-pressed="true">Real, from the web</button><button data-v="catalog" aria-pressed="false">Demo catalog</button></div></div>
+    <div class="choice"><span>Task</span><div class="seg" id="flights">
+      <button data-v="task" aria-pressed="true">Any purchase</button><button data-v="web" aria-pressed="false">Flight, real web</button><button data-v="catalog" aria-pressed="false">Flight, demo catalog</button></div></div>
+    <div class="choice" id="modelWrap"><span>Agent</span><div class="seg" id="model"></div></div>
     <div class="choice"><span>Agent</span><div class="seg" id="profile"></div></div>
     <div class="choice"><span>Request</span><div class="seg" id="req">
       <button data-v="precise" aria-pressed="true">Precise</button><button data-v="vague" aria-pressed="false">Vague</button></div></div>
@@ -154,9 +162,16 @@
     <button class="primary" id="run">Run agent</button>
     <button class="link" id="scripted">Or run the three scripted agents</button>
   </div>
+  <div class="taskbox" id="taskbox">
+    <label>What should the agent buy?<textarea id="taskText">Buy a 12-pack of AA batteries, Duracell or Amazon Basics.</textarea></label>
+    <label>Budget (USD)<input id="taskBudget" type="number" min="1" step="0.01" value="20"></label>
+    <label>Must-haves, one per line<textarea id="taskMusts">Duracell or Amazon Basics
+12 batteries
+AA size</textarea></label>
+  </div>
   <div class="brief">
     <div><small id="toldK">The agent is told, word for word</small><span id="toldV"></span></div>
-    <div><small>Scrip checks against what the person confirmed (the agent never sees this)</small><span id="confirmedV"></span></div>
+    <div><small id="confirmedK">Scrip checks against what the person confirmed (the agent never sees this)</small><span id="confirmedV"></span></div>
   </div>
 </section>
 
@@ -165,7 +180,7 @@
   <div class="stop" id="n-agent"><div class="dot"></div><div class="name">Agent</div><small id="n-agent-s"></small></div>
   <div class="stop" id="n-scrip"><div class="dot"></div><div class="name">Scrip</div><small id="n-scrip-s"></small></div>
   <div class="stop" id="n-natural"><div class="dot"></div><div class="name">Natural</div><small id="n-natural-s"></small></div>
-  <div class="stop" id="n-merchant"><div class="dot"></div><div class="name">Example Air</div><small id="n-merchant-s"></small></div>
+  <div class="stop" id="n-merchant"><div class="dot"></div><div class="name" id="merchantName">Example Air</div><small id="n-merchant-s"></small></div>
 </div>
 
 <div class="tiles" aria-label="All runs">
@@ -215,14 +230,28 @@
 
   /* Segmented controls: one pressed button per group */
   const value = id => $(id).querySelector('[aria-pressed="true"]')?.dataset.v;
+  for (const id of ['taskText', 'taskBudget', 'taskMusts']) document.getElementById(id).addEventListener('input', () => brief());
   function setSeg(id, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
-  for (const id of ['flights', 'profile', 'req', 'mode', 'feedback', 'scrip']) $(id).onclick = e => {
+  for (const id of ['flights', 'profile', 'req', 'mode', 'feedback', 'scrip', 'model']) $(id).onclick = e => {
     const b = e.target.closest('button');
     if (b && !b.disabled) { setSeg(id, b.dataset.v); brief(); }
   };
 
+  const isTask = () => value('flights') === 'task';
+  function musts() { return $('taskMusts').value.split('\n').map(m => m.trim()).filter(Boolean); }
   function brief() {
+    const task = isTask();
+    $('taskbox').hidden = !task; $('modelWrap').hidden = !task;
+    $('profile').closest('.choice').hidden = task; $('req').closest('.choice').hidden = task;
+    $('merchantName').textContent = task ? 'Merchant' : 'Example Air';
     $('toldK').textContent = 'The agent is told, word for word';
+    $('confirmedK').textContent = task ? 'Scrip checks every checkout against' : 'Scrip checks against what the person confirmed (the agent never sees this)';
+    if (task) {
+      const budget = Number($('taskBudget').value) || 0, m = musts();
+      $('toldV').textContent = `"Customer request: ${$('taskText').value.trim()}" Budget: $${budget.toFixed(2)} total.${m.length ? ' Must-haves: ' + m.join('; ') + '.' : ''}`;
+      $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') : ''}. A separate checker (Claude Haiku) judges each must-have.`;
+      return;
+    }
     const src = cfg.sources[value('flights')] || { requests: {} };
     $('toldV').textContent = '"Customer request: ' + (src.requests[value('req')] || '') + '"';
     const c = src.requirements;
@@ -232,7 +261,7 @@
   /* Plain-English timeline. Tool results fold into their call; bookkeeping events are hidden. */
   const who = t => ({ money_moved: 'Natural', payment_reviewed: 'You', agent_run_started: 'Agent', agent_tool_call: 'Agent', agent_message: 'Agent', agent_run_finished: 'Agent', payment_submitted: 'Agent',
     payment_held: 'Natural', payment_settled: 'Natural' }[t] || 'Scrip');
-  const HIDDEN = new Set(['request_received', 'requirements_confirmed', 'agent_interpretation_recorded', 'hold_decision_started', 'agent_tool_result']);
+  const HIDDEN = new Set(['task_confirmed', 'purchase_understanding', 'request_received', 'requirements_confirmed', 'agent_interpretation_recorded', 'hold_decision_started', 'agent_tool_result']);
   const pretty = v => { try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v, null, 2); } catch { return String(v); } };
   // Returns HTML.
   function toolLine(d, list) {
@@ -240,6 +269,8 @@
     const named = id => { const c = list.find(x => x.type === 'candidate_checked' && x.data.offer.offerId === id); return c ? offerName(c.data.offer) : 'the ' + flight(id); };
     if (d.tool === 'WebSearch') return 'Searched the web: ' + esc(i.query || '');
     if (d.tool === 'WebFetch') return 'Opened ' + (i.url ? link(i.url) : 'a page');
+    if (d.tool === 'checkout' && i.item) return `Checked out ${esc(i.item)} from ${esc(i.merchant || '?')} for $${esc(i.totalUsd)}` + (i.url ? ` (found on ${link(i.url)})` : '');
+    if (d.tool === 'state_understanding' && i.budgetUsd !== undefined) return `Wrote down what it thinks the person wants: budget $${esc(i.budgetUsd)}${(i.musts || []).length ? '; ' + esc(i.musts.join('; ')) : ''}`;
     if ((d.tool === 'request_purchase' || d.tool === 'checkout') && i.airline) {
       const nums = (i.outbound || []).map(l => l.flight).join(' + ');
       return `Asked Scrip to buy ${esc(i.airline)} ${esc(nums)} for $${esc(i.totalUsd)}` + (i.sourceUrl ? ` (found on ${link(i.sourceUrl)})` : '');
@@ -273,7 +304,12 @@
       }
       case 'payment_attempted': {
         const [tone, label] = STATUS[d.decision] || ['', d.decision];
-        return [tone, `Checkout ${label.toLowerCase()}: ${offerName(d.offer)}, ${usd(d.offer.totalCents)}${d.reasons.length ? ' (' + d.reasons.join('; ') + ')' : ''}${d.mode === 'observer' && d.blockerDecision !== 'accepted' ? ' (observer mode; Blocker would have ' + (d.blockerDecision === 'in_review' ? 'held it for review' : 'rejected it') + ')' : ''}`];
+        return [tone, `Checkout ${label.toLowerCase()}: ${d.label}, ${usd(d.amountCents)}${d.reasons.length ? ' (' + d.reasons.join('; ') + ')' : ''}${d.mode === 'observer' && d.blockerDecision !== 'accepted' ? ' (observer mode; Blocker would have ' + (d.blockerDecision === 'in_review' ? 'held it for review' : 'rejected it') + ')' : ''}`];
+      }
+      case 'purchase_checked': {
+        const bits = [d.priceSeen ? 'price seen in its research' : 'price NOT in anything it read', d.pageSeen ? 'page seen' : 'page never opened'];
+        const bad = !d.priceSeen || !d.pageSeen || d.checks.some(c => c.verdict !== 'yes');
+        return [bad ? 'warn' : 'ok', `Checked the item: ${bits.join(', ')}${d.checks.length ? '. Must-haves: ' + d.checks.map(c => `${c.must}: ${c.verdict}`).join('; ') : ''}${d.checkerError ? ' (checker error: ' + d.checkerError + ')' : ''}`];
       }
       case 'payment_reviewed': return [d.decision === 'approved' ? 'ok' : 'no', d.decision === 'approved' ? 'You approved the payment' : 'You denied the payment. No money moved.'];
       case 'money_moved': return [d.status === 'COMPLETED' ? 'ok' : 'no', `Natural moved ${usd(d.amountCents)} from ${d.from} to ${d.to} (${d.status})`];
@@ -301,7 +337,7 @@
     renderMonitors();
     renderActivity();
   }
-  const SHORT = { misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
+  const SHORT = { unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
     source_unverified: "Couldn't verify its source", paid_not_approved: 'Paid for something not approved' };
   function renderMonitors() {
     const list = alerts[selected];
@@ -310,9 +346,21 @@
     $('monitors').innerHTML = list.length ? '<div class="alerts">' + list.map(a => {
       const ids = [a.refs.naturalAgentId, a.refs.paymentId, a.refs.approvalId].filter(Boolean).join('  ');
       return `<div class="alert ${a.severity}"><strong>${esc(a.title)}</strong><p>${esc(a.detail)}</p>${ids ? `<div class="ids">${esc(ids)}</div>` : ''}</div>`;
-    }).join('') + '</div>' : '<p class="clear">No alerts. What the agent understood, claimed, and paid for all check out.</p>';
+    }).join('') + '</div>' : (activity[selected] && !activity[selected].attempts.length
+      ? `<p class="clear" style="color:var(--ink-2)">No alerts. The agent has not checked out anything${outcomes[selected] ? '; it finished without buying' : ' yet'}.</p>`
+      : '<p class="clear">No alerts. What the agent understood, claimed, and paid for all check out.</p>');
   }
   function renderCompare(list) {
+    const task = list.find(s => s.type === 'task_confirmed');
+    if (task) {
+      const u = list.filter(s => s.type === 'purchase_understanding').at(-1)?.data;
+      const t = task.data, rows = Math.max(t.musts.length, u ? u.musts.length : 0);
+      $('compareWrap').hidden = false;
+      $('compare').innerHTML = `<tr><th></th><th>Person asked</th><th>Agent understood</th></tr>
+        <tr class="${u && u.budgetCents !== t.budgetCents ? 'miss' : ''}"><td>Budget</td><td>${usd(t.budgetCents)}</td><td>${u ? usd(u.budgetCents) : '<span class="pending">not yet</span>'}</td></tr>` +
+        Array.from({ length: rows }, (_, i) => `<tr><td>${i ? '' : 'Must-haves'}</td><td>${esc(t.musts[i] || '')}</td><td>${u ? esc(u.musts[i] || '') : (i ? '' : '<span class="pending">not yet</span>')}</td></tr>`).join('');
+      return;
+    }
     const conf = list.find(s => s.type === 'requirements_confirmed');
     const said = list.filter(s => s.type === 'agent_interpretation_recorded');
     $('compareWrap').hidden = !conf;
@@ -343,6 +391,8 @@
       const [tone, label] = STATUS[p.status] || ['', p.status];
       const note = p.mode === 'observer' && p.blockerDecision !== 'accepted' ? `<div class="muted">Observer mode: Blocker would have ${p.blockerDecision === 'in_review' ? 'held this for review' : 'rejected it'}.</div>` : '';
       return `<div class="pay-attempt"><div class="row"><strong>${esc(p.label)}, ${usd(p.amountCents)}</strong><span class="tag ${tone}">${label}</span></div>
+        ${p.details ? `<div class="muted">${esc(p.details)}</div>` : ''}
+        ${p.checks && p.checks.length ? `<ul class="checks">${p.checks.map(c => `<li class="${c.verdict}">${c.verdict === 'yes' ? 'Meets' : c.verdict === 'no' ? 'Misses' : 'Unclear'}: ${esc(c.must)}. <span style="color:var(--ink-2)">${esc(c.reason)}</span></li>`).join('')}</ul>` : ''}
         ${p.reasons.length ? `<div class="muted">${esc(p.reasons.join('; '))}</div>` : ''}${note}
         <div class="muted">Found on ${link(p.sourceUrl)}${p.transferId ? `. Natural transfer <span class="id">${esc(p.transferId)}</span> ${esc(p.transferStatus || '')}` : ''}</div>
         ${p.status === 'in_review' ? `<div class="acts"><button class="primary" data-review="${esc(p.attemptId)}" data-approve="1">Approve and pay</button><button class="ghost" data-review="${esc(p.attemptId)}" data-approve="0">Deny</button></div>` : ''}</div>`;
@@ -376,7 +426,7 @@
   function renderNatural() {
     const moved = Object.entries(activity).flatMap(([sc, a]) => a.attempts.filter(p => p.transferId).map(p => ({ ...p, scenario: sc })));
     const transfers = moved.map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amountCents)}</span><span class="tag ${p.transferStatus === 'COMPLETED' ? 'ok' : 'no'}">${esc(p.transferStatus === 'COMPLETED' ? 'Completed' : p.transferStatus || '')}</span></div>
-      <div class="muted">Travel budget → Example Air (merchant)</div><div class="muted">${esc(p.label)}</div><div class="id" style="margin-top:8px">${esc(p.transferId)}</div></div>`).join('');
+      <div class="muted">Travel budget → ${p.merchant ? 'Merchant (simulated), for ' + esc(p.merchant) : 'Example Air (merchant)'}</div><div class="muted">${esc(p.label)}</div><div class="id" style="margin-top:8px">${esc(p.transferId)}</div></div>`).join('');
     if (transfers) { $('natural').innerHTML = transfers; return; }
     $('natural').innerHTML = Object.values(payments).map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amount)}</span><span class="tag ${p.tone}">${esc(p.status)}</span></div>
       <div class="muted">${esc(NAMES[p.scenario] || p.scenario)} paying Example Air</div>
@@ -387,7 +437,7 @@
     $('records').innerHTML = list.map(r => {
       const misread = Object.entries(r.misread).sort((a, b) => b[1] - a[1]).map(([f, n]) => `${FIELDS[f] || f} (${n})`).join(', ');
       return `<div class="card"><div class="row"><strong>${esc(NAMES['real:' + r.profile] || r.profile)}</strong><span class="id">${esc(r.versionId.slice(0, 8))}</span></div>
-        <div class="big" style="margin-top:8px">Understood ${r.understoodCorrectly} of ${r.stated} times</div>
+        ${r.stated ? `<div class="big" style="margin-top:8px">Understood ${r.understoodCorrectly} of ${r.stated} times</div>` : ''}
         ${misread ? `<div class="muted">Got wrong: ${esc(misread)}</div>` : ''}
         <div class="muted">${r.paid} paid, ${r.blockedBeforePayment} blocked, ${r.deniedAtPayment} denied</div>
         ${Object.keys(r.alerts).length ? `<div class="muted">Alerts: ${esc(Object.entries(r.alerts).map(([k, n]) => `${SHORT[k] || k} (${n})`).join(', '))}</div>` : '<div class="muted">No alerts</div>'}
@@ -414,7 +464,7 @@
     if (s.type === 'hold_decided') { const ok = d.decision === 'approved'; setStop('scrip', ok ? 'Released the payment' : 'Denied the payment', ok ? 'ok' : 'no'); progress(2, ok ? 'ok' : 'no'); }
     if (s.type === 'payment_attempted') {
       const dec = d.decision;
-      setStop('agent', 'Checking out ' + usd(d.offer.totalCents), 'lit');
+      setStop('agent', 'Checking out ' + usd(d.amountCents), 'lit');
       setStop('scrip', dec === 'accepted' ? (d.mode === 'observer' ? 'Observed, let it through' : 'Accepted the payment') : dec === 'rejected' ? 'Rejected the payment' : 'Held it for your review', dec === 'accepted' ? 'ok' : dec === 'rejected' ? 'no' : 'lit');
       progress(1, dec === 'accepted' ? 'ok' : dec === 'rejected' ? 'no' : '');
     }
@@ -439,7 +489,11 @@
     $('run').disabled = $('scripted').disabled = true; $('status').textContent = 'Running';
     if (scripted) { $('toldK').textContent = 'Every scripted agent gets'; $('toldV').textContent = '"' + SCRIPTED_REQUEST + '"'; } else brief();
     const mode = value('mode');
-    source = new EventSource(scripted ? '/run?mode=' + mode : `/run-agent?mode=${mode}&flights=${value('flights')}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}&feedback=${value('feedback')}&scrip=${value('scrip')}`);
+    const common = `mode=${mode}&feedback=${value('feedback')}&scrip=${value('scrip')}`;
+    const taskQuery = () => `flights=task&model=${encodeURIComponent(value('model') || 'sonnet')}&task=${encodeURIComponent($('taskText').value.trim())}&budget=${encodeURIComponent($('taskBudget').value)}&musts=${encodeURIComponent(musts().join('\n'))}`;
+    source = new EventSource(scripted ? '/run?mode=' + mode
+      : isTask() ? `/run-agent?${common}&${taskQuery()}`
+      : `/run-agent?${common}&flights=${value('flights')}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}`);
     source.addEventListener('step', e => {
       const s = JSON.parse(e.data);
       if (s.scenario !== selected) { selected = s.scenario; seen = 0; }
@@ -451,7 +505,7 @@
     source.addEventListener('log', e => { $('railNote').textContent += JSON.parse(e.data).line + ' '; });
     source.addEventListener('done', e => {
       for (const sc of JSON.parse(e.data).scenarios) outcomes[sc.name] = sc.outcome;
-      renderTabs(); $('status').textContent = 'Done'; finish(); loadRecords(); loadOverview();
+      renderTabs(); renderMonitors(); $('status').textContent = 'Done'; finish(); loadRecords(); loadOverview();
     });
     source.addEventListener('error', e => {
       if (e.data) $('status').textContent = 'Stopped: ' + JSON.parse(e.data).message;
@@ -470,6 +524,8 @@
     cfg = c;
     $('profile').innerHTML = c.profiles.map((p, i) => `<button data-v="${esc(p.id)}" aria-pressed="${i === 0}">${esc(p.label)}</button>`).join('');
     for (const p of c.profiles) { NAMES['real:' + p.id] = p.label + ', demo catalog'; NAMES['real:' + p.id + '-web'] = p.label + ', real web'; }
+    $('model').innerHTML = (c.taskModels || []).map((m, i) => `<button data-v="${esc(m.id)}" aria-pressed="${i === 0}">${esc(m.label)}</button>`).join('');
+    for (const m of c.taskModels || []) NAMES['real:task-' + m.id] = m.label + ', any purchase';
     if (!c.sandboxAvailable) $('mode').querySelector('[data-v=sandbox]').disabled = true;
     setSeg('mode', q.get('run') || c.defaultMode);
     if (q.get('req')) setSeg('req', q.get('req'));
@@ -477,9 +533,13 @@
     if (q.get('flights')) setSeg('flights', q.get('flights'));
     if (q.get('feedback')) setSeg('feedback', q.get('feedback'));
     if (q.get('scrip')) setSeg('scrip', q.get('scrip'));
+    if (q.get('task')) { setSeg('flights', 'task'); $('taskText').value = q.get('task'); }
+    if (q.get('budget')) $('taskBudget').value = q.get('budget');
+    if (q.get('musts')) $('taskMusts').value = q.get('musts');
+    if (q.get('model')) setSeg('model', q.get('model'));
     brief();
     if (q.get('run') === 'offline' || q.get('run') === 'sandbox') start(true);
-    else if (q.get('agent')) start(false);
+    else if (q.get('agent') || q.get('task')) start(false);
   }).catch(() => { $('status').textContent = 'Could not reach the server'; });
 </script>
 </body>

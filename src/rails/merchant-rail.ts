@@ -1,8 +1,9 @@
 /**
  * Where an accepted checkout's money goes: a Natural wallet acting as the
  * merchant. The agent's purchase is settled as a real internal transfer on
- * the Natural sandbox, from the payer's default wallet to a wallet named
- * "Example Air (merchant)", at full price (sandbox money). Offline runs use
+ * the Natural sandbox, from the payer's default wallet to a merchant wallet
+ * ("Example Air (merchant)" for flights, "Merchant (simulated)" for any
+ * purchase), at full price (sandbox money). Offline runs use
  * an in-memory stand-in with the same interface.
  */
 import { NaturalClient } from '@naturalpay/sdk';
@@ -13,19 +14,20 @@ export interface MerchantRail {
   pay(input: { amountCents: number; description: string; tags: Record<string, string>; idempotencyKey: string }): Promise<Transfer>;
 }
 
-const MERCHANT_WALLET = 'Example Air (merchant)';
+const DEFAULT_WALLET = 'Example Air (merchant)';
 const SANDBOX_URL = 'https://api.sandbox.natural.com';
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'RETURNED', 'CANCELED', 'APPROVAL_DENIED']);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export class FakeMerchantRail implements MerchantRail {
   readonly mode = 'offline' as const;
+  constructor(readonly walletName = DEFAULT_WALLET) {}
   readonly transfers: (Transfer & { amountCents: number; tags: Record<string, string> })[] = [];
   failNext = false;
   async pay(input: { amountCents: number; tags: Record<string, string> }): Promise<Transfer> {
     const status = this.failNext ? 'FAILED' : 'COMPLETED';
     this.failNext = false;
-    const transfer = { transferId: `trf_fake_${this.transfers.length + 1}`, status, from: 'Travel budget', to: MERCHANT_WALLET };
+    const transfer = { transferId: `trf_fake_${this.transfers.length + 1}`, status, from: 'Travel budget', to: this.walletName };
     this.transfers.push({ ...transfer, amountCents: input.amountCents, tags: input.tags });
     return transfer;
   }
@@ -38,7 +40,7 @@ export class NaturalMerchantRail implements MerchantRail {
   private client: NaturalClient;
   private wallets?: Promise<{ source: WalletRow; merchant: WalletRow }>;
 
-  constructor(token: string, instanceId: string) {
+  constructor(token: string, instanceId: string, private walletName = DEFAULT_WALLET) {
     if (!token.startsWith('sk_ntl_sandbox_')) throw new Error('The merchant rail only runs on the Natural sandbox (sk_ntl_sandbox_ key)');
     this.client = new NaturalClient({ token, baseUrl: SANDBOX_URL, instanceId });
   }
@@ -49,11 +51,11 @@ export class NaturalMerchantRail implements MerchantRail {
       const list = (await this.client.wallets.list()) as unknown as { data: WalletRow[] };
       const source = list.data.find(w => w.attributes.isDefault) ?? list.data[0];
       if (!source) throw new Error('No wallet on the sandbox account');
-      let merchant = list.data.find(w => w.attributes.displayName === MERCHANT_WALLET);
+      let merchant = list.data.find(w => w.attributes.displayName === this.walletName);
       if (!merchant) {
         const created = (await this.client.wallets.create({
-          idempotencyKey: 'scrip-example-air-merchant-wallet', displayName: MERCHANT_WALLET,
-          description: 'Stands in for the airline: receives accepted agent checkouts in the Scrip demo.',
+          idempotencyKey: `scrip-merchant-wallet-${this.walletName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, displayName: this.walletName,
+          description: 'Stands in for the seller: receives accepted agent checkouts in the Scrip demo.',
           tags: { scrip_role: 'simulated_merchant' },
         })) as unknown as { data: WalletRow };
         merchant = created.data;
@@ -76,11 +78,11 @@ export class NaturalMerchantRail implements MerchantRail {
       const detail = (await this.client.transfers.get({ transferId: created.data.id })) as unknown as { data: { attributes: { status?: string } } };
       status = detail.data.attributes.status ?? status;
     }
-    return { transferId: created.data.id, status, from: source.attributes.displayName ?? 'Wallet', to: MERCHANT_WALLET };
+    return { transferId: created.data.id, status, from: source.attributes.displayName ?? 'Wallet', to: this.walletName };
   }
 }
 
-export function setupMerchantRail(mode: 'offline' | 'sandbox', runId: string): MerchantRail {
-  if (mode === 'offline') return new FakeMerchantRail();
-  return new NaturalMerchantRail(process.env.NATURAL_SANDBOX_API_KEY ?? '', runId);
+export function setupMerchantRail(mode: 'offline' | 'sandbox', runId: string, walletName = DEFAULT_WALLET): MerchantRail {
+  if (mode === 'offline') return new FakeMerchantRail(walletName);
+  return new NaturalMerchantRail(process.env.NATURAL_SANDBOX_API_KEY ?? '', runId, walletName);
 }

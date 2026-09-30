@@ -88,6 +88,19 @@ One request ("NYC to SF, Oct 16–18, direct only, refundable, under $600"), thr
 
 The live run needs `NATURAL_SANDBOX_API_KEY` and `NATURAL_SANDBOX_AGENT_KEY`. Details in [docs/natural.md](docs/natural.md).
 
+### Any purchase: real agent, real web, Natural wallet as the merchant
+
+On the page, choose **Any purchase**, type what the agent should buy, a budget, and
+must-haves (one per line). A real Claude agent (Sonnet or Haiku) gets those words
+verbatim, researches the live web, and calls `checkout` with the item, merchant,
+total, and the page it found it on (`src/purchase/purchase.ts`). Scrip rejects a
+checkout that is over budget or misses a must-have, holds for review one whose
+price never appeared in anything the agent read, whose page it never opened, or
+whose must-haves the checker can't confirm, and accepts the rest. Must-haves are
+plain words, so a separate Claude Haiku call judges each one (`src/purchase/judge.ts`)
+and its answers are recorded next to the payment. Accepted and approved checkouts
+move sandbox money to a "Merchant (simulated)" Natural wallet; no real store is paid.
+
 ### Real AI agents, per-version track record
 
 ```bash

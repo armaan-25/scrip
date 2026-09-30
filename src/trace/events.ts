@@ -1,5 +1,6 @@
 import type { RequirementDifference, Violation } from '../flights/rules.js';
 import type { FlightOffer, FlightRequirements } from '../flights/types.js';
+import type { MustCheck, PurchaseItem } from '../purchase/purchase.js';
 
 /** Everything that can happen to one purchase, in the order it happens. */
 export type TraceEvent =
@@ -16,7 +17,10 @@ export type TraceEvent =
   | { type: 'hold_decided'; data: { approvalId: string; paymentId: string; decision: 'approved' | 'denied'; reasons: string[] } }
   | { type: 'payment_settled'; data: { paymentId: string; status: string; note?: string } }
   | { type: 'source_checked'; data: { offerId: string; url: string; status: 'backed' | 'not_backed' | 'unreadable'; priceShown: boolean; flightsShown: string[]; flightsMissing: string[]; detail: string } }
-  | { type: 'payment_attempted'; data: { attemptId: string; offer: FlightOffer; sourceUrl: string; mode: 'blocker' | 'observer'; decision: 'accepted' | 'rejected' | 'in_review'; blockerDecision: 'accepted' | 'rejected' | 'in_review'; reasons: string[] } }
+  | { type: 'task_confirmed'; data: { budgetCents: number; musts: string[] } }
+  | { type: 'purchase_understanding'; data: { budgetCents: number; musts: string[] } }
+  | { type: 'purchase_checked'; data: { attemptId: string; item: PurchaseItem; priceSeen: boolean; pageSeen: boolean; checks: MustCheck[]; checkerModel: string; checkerError?: string } }
+  | { type: 'payment_attempted'; data: { attemptId: string; label: string; amountCents: number; offer?: FlightOffer; item?: PurchaseItem; sourceUrl: string; mode: 'blocker' | 'observer'; decision: 'accepted' | 'rejected' | 'in_review'; blockerDecision: 'accepted' | 'rejected' | 'in_review'; reasons: string[] } }
   | { type: 'payment_reviewed'; data: { attemptId: string; decision: 'approved' | 'denied'; by: string } }
   | { type: 'money_moved'; data: { attemptId: string; transferId: string; amountCents: number; from: string; to: string; status: string } }
   | { type: 'agent_run_started'; data: { agentVersionId: string; profile: string; model: string; prompt: string; refusalFeedback: 'explain' | 'ask_customer' } }

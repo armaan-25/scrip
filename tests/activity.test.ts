@@ -19,7 +19,7 @@ const run = (t: string, decision: 'accepted' | 'in_review') => [
   ...visit(t, 'a', 'WebSearch', { query: 'JFK SFO nonstop' }, 'results...'),
   ...visit(t, 'b', 'WebFetch', { url: 'https://www.jetblue.com/x' }, 'JFK-SFO from $234'),
   ...visit(t, 'c', 'WebFetch', { url: 'https://www.expedia.com/y' }, 'The server returned HTTP 429 Too Many Requests.'),
-  ev(t, { type: 'payment_attempted', data: { attemptId: `${t}:web-1`, offer, sourceUrl: 'https://www.jetblue.com/x', mode: 'blocker', decision, blockerDecision: decision, reasons: [] } }),
+  ev(t, { type: 'payment_attempted', data: { attemptId: `${t}:web-1`, label: 'JetBlue B6 115', amountCents: 56800, offer, sourceUrl: 'https://www.jetblue.com/x', mode: 'blocker', decision, blockerDecision: decision, reasons: [] } }),
 ];
 
 describe('activity', () => {

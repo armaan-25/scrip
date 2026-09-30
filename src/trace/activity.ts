@@ -4,12 +4,15 @@
  * payment it attempted with its current status, and the money that actually
  * moved on Natural. Pure: events in, summary out.
  */
+import type { MustCheck } from '../purchase/purchase.js';
 import type { RecordedEvent } from './events.js';
 
 export interface SiteVisit { kind: 'search' | 'page'; target: string; status: 'loaded' | 'blocked' | 'error'; detail: string; at: string }
 export type AttemptStatus = 'accepted' | 'rejected' | 'in_review' | 'approved' | 'denied' | 'failed';
 export interface PaymentAttempt {
-  attemptId: string; offerId: string; label: string; amountCents: number; sourceUrl: string;
+  attemptId: string; label: string; merchant?: string; details?: string; amountCents: number; sourceUrl: string;
+  /** Any-purchase runs: the must-have checker's answers. */
+  checks?: MustCheck[];
   mode: 'blocker' | 'observer'; blockerDecision: 'accepted' | 'rejected' | 'in_review';
   status: AttemptStatus; reasons: string[]; transferId?: string; transferStatus?: string; at: string;
 }
@@ -30,6 +33,7 @@ export function runActivity(events: RecordedEvent[]): RunActivity {
   const sites: SiteVisit[] = [];
   const attempts = new Map<string, PaymentAttempt>();
   let moneyMovedCents = 0;
+  const pendingChecks = new Map<string, MustCheck[]>();
   for (const e of events) {
     if (e.type === 'agent_tool_call') calls.set(e.data.toolUseId, { tool: e.data.tool, input: obj(e.data.input), at: e.at });
     if (e.type === 'agent_tool_result' && (e.data.tool === 'WebSearch' || e.data.tool === 'WebFetch')) {
@@ -41,13 +45,13 @@ export function runActivity(events: RecordedEvent[]): RunActivity {
       });
     }
     if (e.type === 'payment_attempted') {
-      const o = e.data.offer;
       attempts.set(e.data.attemptId, {
-        attemptId: e.data.attemptId, offerId: o.offerId, label: `${o.carrier} ${o.outbound.map(l => l.flight).join(' + ')}`,
-        amountCents: o.totalCents, sourceUrl: e.data.sourceUrl, mode: e.data.mode, blockerDecision: e.data.blockerDecision,
+        attemptId: e.data.attemptId, label: e.data.label, merchant: e.data.item?.merchant, details: e.data.item?.details,
+        amountCents: e.data.amountCents, sourceUrl: e.data.sourceUrl, mode: e.data.mode, blockerDecision: e.data.blockerDecision,
         status: e.data.decision, reasons: e.data.reasons, at: e.at,
       });
     }
+    if (e.type === 'purchase_checked') pendingChecks.set(e.data.attemptId, e.data.checks);
     if (e.type === 'payment_reviewed') {
       const a = attempts.get(e.data.attemptId);
       if (a) a.status = e.data.decision;
@@ -62,6 +66,7 @@ export function runActivity(events: RecordedEvent[]): RunActivity {
       if (e.data.status === 'COMPLETED') moneyMovedCents += e.data.amountCents;
     }
   }
+  for (const a of attempts.values()) { const c = pendingChecks.get(a.attemptId); if (c) a.checks = c; }
   return { traceId, sites, attempts: [...attempts.values()], moneyMovedCents };
 }
 

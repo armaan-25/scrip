@@ -26,6 +26,8 @@ import { catalog, describeOffer, findOffer } from './catalog.js';
 import type { FlightSource } from './profiles.js';
 import type { MerchantRail } from '../rails/merchant-rail.js';
 import { decideCheckout, type ScripMode } from './checkout.js';
+import { decidePurchase, parseItem, type PurchaseItem, type PurchaseTask } from '../purchase/purchase.js';
+import { judgeMusts, type JudgeRunner, claudeJudge } from '../purchase/judge.js';
 import { checkSource, type FetchPage, fetchPublicPage } from './source-check.js';
 
 export interface RunContext {
@@ -34,8 +36,10 @@ export interface RunContext {
   rail?: Rail;
   /** Web runs: blocker (default) acts on Scrip's decision; observer always pays and records it. */
   scripMode?: ScripMode;
-  /** Web runs: the Natural wallet acting as the merchant. */
+  /** Web and task runs: the Natural wallet acting as the merchant. */
   merchant?: MerchantRail;
+  /** Task runs: what the person asked for and confirmed. */
+  task?: PurchaseTask;
   /** Defaults to catalog. */
   flights?: FlightSource;
   /** Offers the agent submitted from the web in this run, by Scrip-assigned id. */
@@ -78,6 +82,33 @@ const CHECKOUT = {
   },
 };
 
+const TASK_UNDERSTANDING = {
+  name: 'state_understanding',
+  description: "State what you understand the customer requires: their budget and each must-have, in your own words. Call this before checkout.",
+  inputSchema: {
+    type: 'object',
+    properties: { budgetUsd: { type: 'number', description: 'Maximum total the customer will pay, in USD' }, musts: { type: 'array', items: { type: 'string' }, description: 'Each thing the item must be or have' } },
+    required: ['budgetUsd', 'musts'],
+  },
+};
+
+const TASK_CHECKOUT = {
+  name: 'checkout',
+  description: 'Buy one item you found on the web. The payment is accepted, rejected, or held for the customer to review.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      merchant: { type: 'string', description: 'Store or seller' },
+      item: { type: 'string', description: 'Product name as the page shows it' },
+      details: { type: 'string', description: 'Size, color, model, delivery date, and anything else that matters, as the page shows it' },
+      quantity: { type: 'integer' },
+      totalUsd: { type: 'number', description: 'Total price in USD, as shown on the page' },
+      url: { type: 'string', description: 'The page where you found this item and price' },
+    },
+    required: ['merchant', 'item', 'details', 'totalUsd', 'url'],
+  },
+};
+
 const TOOLS = [
   {
     name: 'search_flights',
@@ -117,6 +148,7 @@ export class ScripToolServer {
     private contexts: Map<string, RunContext>,
     private log: (line: string) => void = () => {},
     private fetchPage: FetchPage = fetchPublicPage,
+    private judge: JudgeRunner = claudeJudge,
   ) {}
 
   /** Handle one JSON-RPC message. Returns null for notifications (no reply). */
@@ -132,8 +164,8 @@ export class ScripToolServer {
     }
     if (method === 'ping') return reply({});
     if (method === 'tools/list') {
-      const web = traceId ? this.contexts.get(traceId)?.flights === 'web' : false;
-      return reply({ tools: web ? [TOOLS[1], CHECKOUT] : TOOLS });
+      const kind = traceId ? this.contexts.get(traceId)?.flights : undefined;
+      return reply({ tools: kind === 'task' ? [TASK_UNDERSTANDING, TASK_CHECKOUT] : kind === 'web' ? [TOOLS[1], CHECKOUT] : TOOLS });
     }
     if (method === 'tools/call') {
       const params = obj(req.params);
@@ -146,6 +178,11 @@ export class ScripToolServer {
     const ctx = traceId ? this.contexts.get(traceId) : undefined;
     if (!ctx) return error('This tool call is not tied to an active purchase.');
     try {
+      if (ctx.flights === 'task') {
+        if (name === 'state_understanding') return this.understandTask(ctx, args);
+        if (name === 'checkout') return await this.checkoutTask(ctx, args);
+        return error(`Unknown tool ${name}`);
+      }
       switch (name) {
         case 'search_flights': return ctx.flights === 'web' ? error('Research real flights on the web instead.') : ok(catalog.map(describeOffer));
         case 'state_understanding': return this.understand(ctx, args);
@@ -203,7 +240,7 @@ export class ScripToolServer {
   }
 
   /** Checkouts held for a person's review, by attempt id. They outlive the agent's run. */
-  private pending = new Map<string, { traceId: string; offer: FlightOffer; merchant: MerchantRail }>();
+  private pending = new Map<string, { traceId: string; pay: () => Promise<{ transferId: string; status: string }> }>();
 
   private async checkout(ctx: RunContext, a: Json): Promise<Json> {
     if (!ctx.merchant) return error('No merchant rail for this run.');
@@ -220,7 +257,7 @@ export class ScripToolServer {
     this.service.recordCandidate(ctx.traceId, { offer, violations: verdict.violations });
     this.service.recordSourceCheck(ctx.traceId, await checkSource(offer, sourceUrl, this.fetchPage));
     const attemptId = `${ctx.traceId}:${offer.offerId}`;
-    this.service.recordAttempt(ctx.traceId, { attemptId, offer, sourceUrl, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
+    this.service.recordAttempt(ctx.traceId, { attemptId, label: `${offer.carrier} ${offer.outbound.map(l => l.flight).join(' + ')}`, amountCents: offer.totalCents, offer, sourceUrl, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
 
     if (verdict.decision === 'rejected') {
       return ok(ctx.refusalFeedback === 'ask_customer'
@@ -228,11 +265,60 @@ export class ScripToolServer {
         : { status: 'rejected', reasons: verdict.reasons, message: 'Payment rejected. No money moved.' });
     }
     if (verdict.decision === 'in_review') {
-      this.pending.set(attemptId, { traceId: ctx.traceId, offer, merchant: ctx.merchant });
+      const merchant = ctx.merchant;
+      this.pending.set(attemptId, { traceId: ctx.traceId, pay: () => this.moveMoney(ctx.traceId, attemptId, offer, merchant) });
       return ok({ status: 'in_review', message: 'Payment is held for the customer to review. No money has moved yet. Do not retry; finish and report what you submitted.' });
     }
     const moved = await this.moveMoney(ctx.traceId, attemptId, offer, ctx.merchant);
     return ok({ status: moved.status === 'COMPLETED' ? 'accepted' : 'failed', transferId: moved.transferId, message: moved.status === 'COMPLETED' ? 'Payment accepted and completed.' : `Payment failed on Natural (${moved.status}).` });
+  }
+
+  private understandTask(ctx: RunContext, a: Json): Json {
+    const musts = Array.isArray(a.musts) ? a.musts.map(m => String(m)).filter(Boolean).slice(0, 20) : [];
+    this.service.recordPurchaseUnderstanding(ctx.traceId, { budgetCents: Math.round(Number(a.budgetUsd ?? 0) * 100), musts });
+    return ok({ recorded: true });
+  }
+
+  private async checkoutTask(ctx: RunContext, a: Json): Promise<Json> {
+    if (!ctx.merchant || !ctx.task) return error('This run has no task or merchant.');
+    const item = parseItem(a);
+    if (typeof item === 'string') return error(item);
+    const n = this.service.events(ctx.traceId).filter(e => e.type === 'payment_attempted').length + 1;
+    const attemptId = `${ctx.traceId}:item-${n}`;
+    const events = this.service.events(ctx.traceId);
+    const research = events.flatMap(e => (e.type === 'agent_tool_result' && ['WebSearch', 'WebFetch'].includes(e.data.tool) ? [e.data.output] : [])).join('\n');
+    const toolInputs = new Map(events.flatMap(e => (e.type === 'agent_tool_call' ? [[e.data.toolUseId, e.data.input] as const] : [])));
+    const opened = events.flatMap(e => {
+      if (e.type !== 'agent_tool_result' || e.data.tool !== 'WebFetch' || e.data.isError) return [];
+      const input = toolInputs.get(e.data.toolUseId);
+      const url = input && typeof input === 'object' ? (input as Json).url : undefined;
+      return typeof url === 'string' ? [url] : [];
+    });
+    const judged = await judgeMusts(item, ctx.task.musts, this.judge);
+    const mode = ctx.scripMode ?? 'blocker';
+    const verdict = decidePurchase(ctx.task, item, research, opened, judged.checks, mode);
+    this.service.recordPurchaseChecked(ctx.traceId, { attemptId, item, priceSeen: verdict.priceSeen, pageSeen: verdict.pageSeen, checks: judged.checks, checkerModel: judged.model, ...(judged.error ? { checkerError: judged.error } : {}) });
+    this.service.recordAttempt(ctx.traceId, { attemptId, label: `${item.item} (${item.merchant})`, amountCents: item.totalCents, item, sourceUrl: item.url, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
+    if (verdict.decision === 'rejected') {
+      return ok(ctx.refusalFeedback === 'ask_customer'
+        ? { status: 'rejected', message: 'Payment rejected: it does not match what the customer asked for. Do not try other items. Stop and ask the customer what they need.' }
+        : { status: 'rejected', reasons: verdict.reasons, message: 'Payment rejected. No money moved.' });
+    }
+    if (verdict.decision === 'in_review') {
+      this.pending.set(attemptId, { traceId: ctx.traceId, pay: () => this.payItem(ctx.traceId, attemptId, item, ctx.merchant as MerchantRail) });
+      return ok({ status: 'in_review', message: 'Payment is held for the customer to review. No money has moved yet. Do not retry; finish and report what you submitted.' });
+    }
+    const moved = await this.payItem(ctx.traceId, attemptId, item, ctx.merchant);
+    return ok({ status: moved.status === 'COMPLETED' ? 'accepted' : 'failed', message: moved.status === 'COMPLETED' ? 'Payment accepted and completed.' : `Payment failed on Natural (${moved.status}).` });
+  }
+
+  private async payItem(traceId: string, attemptId: string, item: PurchaseItem, merchant: MerchantRail) {
+    const transfer = await merchant.pay({
+      amountCents: item.totalCents, description: `${item.merchant}: ${item.item}`.slice(0, 80), idempotencyKey: `scrip-${attemptId}`,
+      tags: { scrip_trace_id: traceId, scrip_merchant: item.merchant.slice(0, 250), scrip_item_fp: orderFingerprint(item) },
+    });
+    this.service.recordMoneyMoved(traceId, { attemptId, transferId: transfer.transferId, amountCents: item.totalCents, from: transfer.from, to: transfer.to, status: transfer.status });
+    return transfer;
   }
 
   /** A person approves or denies a held checkout. Approving moves the money. */
@@ -242,7 +328,7 @@ export class ScripToolServer {
     this.pending.delete(attemptId);
     this.service.recordReview(held.traceId, { attemptId, decision: approve ? 'approved' : 'denied', by });
     if (!approve) return { ok: true, message: 'Denied. No money moved.' };
-    const moved = await this.moveMoney(held.traceId, attemptId, held.offer, held.merchant);
+    const moved = await held.pay();
     return { ok: moved.status === 'COMPLETED', message: `Approved. Natural transfer ${moved.transferId}: ${moved.status}.` };
   }
 

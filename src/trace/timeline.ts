@@ -30,7 +30,10 @@ export function renderTimeline(events: RecordedEvent[]): string[] {
       case 'source_checked': return e.data.status === 'backed'
         ? `Source check: ${e.data.url} shows the claimed price and flights`
         : `Source check: ${e.data.status === 'unreadable' ? 'could not read' : 'NOT BACKED by'} ${e.data.url}: ${e.data.detail}`;
-      case 'payment_attempted': return `Checkout ${e.data.offer.offerId} ${usd(e.data.offer.totalCents)}: ${e.data.decision.toUpperCase().replace('_', ' ')}${e.data.mode === 'observer' && e.data.blockerDecision !== 'accepted' ? ` (observer; blocker would have: ${e.data.blockerDecision.replace('_', ' ')})` : ''}${e.data.reasons.length ? ` (${e.data.reasons.join('; ')})` : ''}`;
+      case 'task_confirmed': return `Person confirmed: budget ${usd(e.data.budgetCents)}${e.data.musts.length ? `; must-haves: ${e.data.musts.join('; ')}` : ''}`;
+      case 'purchase_understanding': return `Agent understood: budget ${usd(e.data.budgetCents)}${e.data.musts.length ? `; must-haves: ${e.data.musts.join('; ')}` : ''}`;
+      case 'purchase_checked': return `Checked ${e.data.item.item}: price ${e.data.priceSeen ? 'seen' : 'NOT seen'} in research, page ${e.data.pageSeen ? 'seen' : 'NOT seen'}${e.data.checks.length ? `; ${e.data.checks.map(c => `${c.must}: ${c.verdict}`).join('; ')}` : ''}`;
+      case 'payment_attempted': return `Checkout ${e.data.label} ${usd(e.data.amountCents)}: ${e.data.decision.toUpperCase().replace('_', ' ')}${e.data.mode === 'observer' && e.data.blockerDecision !== 'accepted' ? ` (observer; blocker would have: ${e.data.blockerDecision.replace('_', ' ')})` : ''}${e.data.reasons.length ? ` (${e.data.reasons.join('; ')})` : ''}`;
       case 'payment_reviewed': return `Reviewer ${e.data.decision} checkout ${e.data.attemptId}`;
       case 'money_moved': return `Natural transfer ${e.data.transferId}: ${usd(e.data.amountCents)} ${e.data.from} → ${e.data.to}, ${e.data.status}`;
       case 'agent_run_started': return `Real agent started: ${e.data.profile} (model ${e.data.model}, version ${e.data.agentVersionId.slice(0, 8)})`;

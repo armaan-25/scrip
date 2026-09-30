@@ -4,6 +4,7 @@ import { confirmedRequirements, demoRequest } from '../src/flights/fixtures.js';
 import { setupRail } from '../src/rails/rail-setup.js';
 import { FakeMerchantRail } from '../src/rails/merchant-rail.js';
 import { runActivity } from '../src/trace/activity.js';
+import { monitorAlerts } from '../src/trace/monitors.js';
 import { createTraceWorld, type TraceWorld } from './helpers/trace-world.js';
 
 let world: TraceWorld;
@@ -149,3 +150,57 @@ describe('ScripToolServer, ask-the-customer refusals', () => {
     expect(recorded?.type === 'purchase_refused' && recorded.data.reasons.length).toBe(2); // Scrip still records why
   });
 });
+
+describe('ScripToolServer, any purchase', () => {
+  const task = { words: 'Buy a 12-pack of AA batteries', budgetCents: 2000, musts: ['Duracell or Amazon Basics'] };
+  const batteries = { merchant: 'Amazon', item: 'Amazon Basics AA 12-pack', details: '12 count', quantity: 1, totalUsd: 11.49, url: 'https://www.amazon.com/dp/B00MNV8E0C' };
+  let merchant: FakeMerchantRail;
+  let verdict: 'yes' | 'no' | 'unsure';
+  const read = (text: string) => {
+    world.service.recordAgent(traceId, { type: 'agent_tool_call', data: { toolUseId: 'p1', tool: 'WebFetch', input: { url: 'https://www.amazon.com/dp/B00MNV8E0C' } } });
+    world.service.recordAgent(traceId, { type: 'agent_tool_result', data: { toolUseId: 'p1', tool: 'WebFetch', output: text, isError: false } });
+  };
+  const setup = (scripMode: 'blocker' | 'observer') => {
+    merchant = new FakeMerchantRail('Merchant (simulated)');
+    verdict = 'yes';
+    traceId = world.service.start('armaan', task.words);
+    world.service.confirmTask(traceId, { budgetCents: task.budgetCents, musts: task.musts });
+    const judge = async () => JSON.stringify([{ must: task.musts[0], verdict, reason: 'from the description' }]);
+    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: '', merchant, scripMode, flights: 'task', task }]]), () => {}, async () => ({ status: 403, text: '' }), judge);
+  };
+  const last = () => runActivity(world.service.events(traceId)).attempts.at(-1);
+
+  it('gives the agent only understanding and checkout, and pays the merchant wallet when everything checks out', async () => {
+    setup('blocker');
+    const list = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, traceId);
+    expect((list as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)).toEqual(['state_understanding', 'checkout']);
+    read('Amazon Basics AA Batteries, 12 Count: $11.49');
+    await call('state_understanding', { budgetUsd: 20, musts: ['Duracell or Amazon Basics'] });
+    expect((await call('checkout', batteries)).text).toMatch(/accepted/);
+    expect(merchant.transfers).toMatchObject([{ amountCents: 1149, status: 'COMPLETED', to: 'Merchant (simulated)' }]);
+    expect(last()).toMatchObject({ status: 'accepted', merchant: 'Amazon', checks: [{ verdict: 'yes' }] });
+    expect(monitorAlerts(world.service.events(traceId))).toEqual([]);
+  });
+
+  it('rejects a failed must-have, holds an unseen price for review, and approving pays', async () => {
+    setup('blocker');
+    read('Amazon Basics AA Batteries, 12 Count: $11.49');
+    verdict = 'no';
+    expect((await call('checkout', batteries)).text).toMatch(/rejected/);
+    verdict = 'yes';
+    expect((await call('checkout', { ...batteries, totalUsd: 9.99 })).text).toMatch(/in_review/);
+    expect(merchant.transfers).toEqual([]);
+    expect(monitorAlerts(world.service.events(traceId)).map(a => a.kind)).toEqual(['must_failed', 'unseen_claim']);
+    await server.review(last()?.attemptId ?? '', true);
+    expect(last()?.status).toBe('approved');
+    expect(merchant.transfers).toHaveLength(1);
+  });
+
+  it('observer pays even over budget, and records that blocker would have rejected it', async () => {
+    setup('observer');
+    read('Duracell AA 24-pack $24.99');
+    expect((await call('checkout', { ...batteries, item: 'Duracell AA 24-pack', totalUsd: 24.99 })).text).toMatch(/accepted/);
+    expect(last()).toMatchObject({ status: 'accepted', blockerDecision: 'rejected', reasons: ['$24.99 is over the $20.00 budget'] });
+  });
+});
+

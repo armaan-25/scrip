@@ -10,7 +10,7 @@
 import { findClaims } from '../agent/source-check.js';
 import type { RecordedEvent } from './events.js';
 
-export type AlertKind = 'misread' | 'fixed_after_hint' | 'unseen_claim' | 'source_unverified' | 'paid_not_approved';
+export type AlertKind = 'misread' | 'fixed_after_hint' | 'unseen_claim' | 'source_unverified' | 'paid_not_approved' | 'unseen_page' | 'must_failed' | 'must_unclear';
 export interface Alert {
   kind: AlertKind;
   severity: 'warning' | 'serious';
@@ -89,6 +89,28 @@ export function monitorAlerts(events: RecordedEvent[]): Alert[] {
       title: e.data.status === 'unreadable' ? "Couldn't verify its source" : "Its source doesn't show the claim",
       detail: `Scrip opened ${e.data.url}: ${e.data.detail}.`, refs,
     });
+  }
+
+  // Any-purchase runs.
+  const task = events.find(e => e.type === 'task_confirmed');
+  const understood = events.find(e => e.type === 'purchase_understanding');
+  if (task?.type === 'task_confirmed' && understood?.type === 'purchase_understanding' && understood.data.budgetCents !== task.data.budgetCents) {
+    alerts.push({ kind: 'misread', severity: 'warning', title: 'Misread the request', detail: `It understood the budget as ${usd(understood.data.budgetCents)}; the person set ${usd(task.data.budgetCents)}.`, refs });
+  }
+  for (const e of events) {
+    if (e.type !== 'purchase_checked') continue;
+    const item = e.data.item;
+    if (!e.data.priceSeen) {
+      const read = events.filter(x => x.seq < e.seq && x.type === 'agent_tool_result' && RESEARCH_TOOLS.has(x.data.tool))
+        .map(x => (x.type === 'agent_tool_result' ? x.data.output : '')).join('\n');
+      const seenPrices = [...new Set(read.match(/\$\s?\d[\d,]*(?:\.\d{2})?/g) ?? [])].slice(0, 6);
+      alerts.push({ kind: 'unseen_claim', severity: 'serious', title: 'Claimed something it never saw', detail: `It checked out "${item.item}" at ${usd(item.totalCents)}, a price that never appeared in anything it read.${seenPrices.length ? ` Prices it did see: ${seenPrices.join(', ')}.` : ''}`, refs });
+    }
+    if (!e.data.pageSeen) alerts.push({ kind: 'unseen_page', severity: 'warning', title: 'Cites a page it never opened', detail: `It says it found the item at ${item.url}, but never opened that page or saw it in results.`, refs });
+    for (const c of e.data.checks) {
+      if (c.verdict === 'no') alerts.push({ kind: 'must_failed', severity: 'serious', title: 'Missed a must-have', detail: `"${c.must}": ${c.reason}`, refs });
+      if (c.verdict === 'unsure') alerts.push({ kind: 'must_unclear', severity: 'warning', title: 'Must-have not confirmed', detail: `"${c.must}": ${c.reason}`, refs });
+    }
   }
 
   const denied = events.find(e => e.type === 'hold_decided' && e.data.decision === 'denied');

@@ -16,7 +16,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runFlightTraceDemo } from '../demo/flight-trace.js';
-import { type FlightSource, findProfile, instructionsFor, manifestFor, PROFILES, scripToolsFor } from '../src/agent/profiles.js';
+import { type FlightSource, findProfile, instructionsFor, manifestFor, PROFILES, scripToolsFor, TASK_MODELS } from '../src/agent/profiles.js';
+import type { PurchaseTask } from '../src/purchase/purchase.js';
 import { runClaudeAgent } from '../src/agent/run-claude-agent.js';
 import { type RunContext, ScripToolServer } from '../src/agent/tool-server.js';
 import { loadConfig } from '../src/config.js';
@@ -59,7 +60,7 @@ function agentFor(profileId: string, source: FlightSource) {
   const key = `${profileId}:${source}`;
   const cached = agents.get(key);
   if (cached) return cached;
-  const profile = findProfile(profileId);
+  const profile = source === 'task' ? TASK_MODELS.find(m => m.id === profileId) : findProfile(profileId);
   if (!profile) throw new Error(`Unknown agent profile ${profileId}`);
   const lineage = registry.registerLineage({ ownerId: 'armaan', operator: 'scrip-demo', displayName: profile.label }, now());
   const version = registry.registerVersion({ lineageId: lineage.lineageId, manifest: manifestFor(profile, source), registeredBy: 'armaan' }, now());
@@ -102,7 +103,7 @@ const RESEARCH_TOOLS = new Set(['WebSearch', 'WebFetch', 'search_flights']);
  * drop "refundable", which real fares under the budget rarely are.
  */
 const vague = 'Get me the cheapest flight from NYC to SF, out Friday Oct 16, back Sunday Oct 18.';
-const SOURCES: Record<FlightSource, { requirements: FlightRequirements; requests: Record<string, string> }> = {
+const SOURCES: Record<Exclude<FlightSource, 'task'>, { requirements: FlightRequirements; requests: Record<string, string> }> = {
   catalog: { requirements: confirmedRequirements, requests: { precise: demoRequest, vague } },
   web: {
     requirements: { ...confirmedRequirements, refundableOnly: false, maxTotalCents: 70000 },
@@ -110,7 +111,56 @@ const SOURCES: Record<FlightSource, { requirements: FlightRequirements; requests
   },
 };
 
-async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: FlightSource, requestKind: string, refusalFeedback: Feedback, scripMode: ScripMode, send: Send) {
+/** Any purchase: the person's words verbatim, their budget and must-haves, a real agent on the web, and the merchant wallet. */
+async function runTaskAgent(modelId: string, mode: 'offline' | 'sandbox', task: PurchaseTask, refusalFeedback: Feedback, scripMode: ScripMode, send: Send) {
+  const profile = TASK_MODELS.find(m => m.id === modelId) ?? TASK_MODELS[0];
+  if (!profile) throw new Error('No task model');
+  const agent = agentFor(profile.id, 'task');
+  const scenario = `real:task-${profile.id}`;
+  const merchant = setupMerchantRail(mode, `scrip-task-${Date.now()}`, 'Merchant (simulated)');
+  send('log', { line: mode === 'sandbox' ? 'Live on Natural\'s sandbox. Accepted checkouts are paid as a transfer to the "Merchant (simulated)" wallet.' : 'Offline: simulated Natural.' });
+  send('log', { line: `Real agent: ${profile.label}, working on the live web. Scrip is in ${scripMode} mode; must-haves are checked by a separate Claude Haiku call, recorded in the trace. No real store is paid; a Natural wallet stands in for it.` });
+  const step = stepSender(send);
+  service.onEvent = e => step(scenario, e);
+  const traceId = service.start('armaan', task.words);
+  try {
+    service.confirmTask(traceId, { budgetCents: task.budgetCents, musts: task.musts });
+    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: '', merchant, scripMode, flights: 'task', task, refusalFeedback });
+    const prompt = `Customer request: "${task.words}"\nBudget: $${(task.budgetCents / 100).toFixed(2)} total.${task.musts.length ? `\nMust-haves:\n${task.musts.map(m => `- ${m}`).join('\n')}` : ''}`;
+    service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: scenario.slice(5), model: profile.model, prompt, refusalFeedback } });
+    const toolNames = new Map<string, string>();
+    let final = { ok: false, turns: null as number | null, costUsd: null as number | null, summary: '' };
+    const run = await runClaudeAgent({
+      prompt, systemPrompt: instructionsFor(profile, 'task'), model: profile.model,
+      mcpUrl: `http://localhost:${PORT}/mcp`, traceId, allowWeb: true, scripTools: scripToolsFor('task'), maxTurns: 40, timeoutMs: 480_000,
+      onActivity: a => {
+        if (a.kind === 'tool_call' && !a.internal) { toolNames.set(a.toolUseId, a.tool); service.recordAgent(traceId, { type: 'agent_tool_call', data: { toolUseId: a.toolUseId, tool: a.tool, input: a.input } }); }
+        if (a.kind === 'tool_result' && toolNames.has(a.toolUseId)) service.recordAgent(traceId, { type: 'agent_tool_result', data: { toolUseId: a.toolUseId, tool: toolNames.get(a.toolUseId) ?? '?', output: a.output.slice(0, RESEARCH_TOOLS.has(toolNames.get(a.toolUseId) ?? '') ? 20_000 : 2000), isError: a.isError } });
+        if (a.kind === 'message') service.recordAgent(traceId, { type: 'agent_message', data: { text: a.text.slice(0, 2000) } });
+        if (a.kind === 'final') final = { ok: a.ok, turns: a.turns, costUsd: a.costUsd, summary: a.text.slice(0, 2000) };
+      },
+    });
+    if (run.exitCode !== 0 && !final.ok) send('log', { line: `Agent exited with code ${run.exitCode}. ${run.stderr.split('\n').slice(-3).join(' ')}` });
+    service.recordAgent(traceId, { type: 'agent_run_finished', data: final });
+  } finally {
+    contexts.delete(traceId);
+    service.onEvent = undefined;
+  }
+  const attempts = runActivity(service.events(traceId)).attempts;
+  return { scenarios: [{ name: scenario, traceId, outcome: attempts.at(-1)?.status ?? 'no_checkout' }] };
+}
+
+/** Reads the any-purchase task from the query: words, budget in dollars, must-haves one per line. */
+function taskFrom(url: URL): PurchaseTask {
+  const words = (url.searchParams.get('task') ?? '').trim().slice(0, 1000);
+  const budgetCents = Math.round(Number(url.searchParams.get('budget')) * 100);
+  if (!words) throw new Error('Type what the agent should buy.');
+  if (!Number.isFinite(budgetCents) || budgetCents <= 0) throw new Error('Set a budget above $0.');
+  const musts = (url.searchParams.get('musts') ?? '').split('\n').map(m => m.trim()).filter(Boolean).slice(0, 12);
+  return { words, budgetCents, musts };
+}
+
+async function runRealAgent(profileId: string, mode: 'offline' | 'sandbox', flights: Exclude<FlightSource, 'task'>, requestKind: string, refusalFeedback: Feedback, scripMode: ScripMode, send: Send) {
   const source = SOURCES[flights];
   const words = source.requests[requestKind] ?? source.requests.precise;
   const allowWeb = flights === 'web';
@@ -183,6 +233,7 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       defaultMode, sources: SOURCES, sandboxAvailable: Boolean(process.env.NATURAL_SANDBOX_API_KEY && process.env.NATURAL_SANDBOX_AGENT_KEY),
       profiles: PROFILES.map(p => ({ id: p.id, label: p.label, model: p.model })),
+      taskModels: TASK_MODELS.map(p => ({ id: p.id, label: p.label })),
     }));
     return;
   }
@@ -238,7 +289,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const send: Send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     try {
-      const result = url.pathname === '/run-agent'
+      const flightsParam = url.searchParams.get('flights');
+      const feedback: Feedback = url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain';
+      const scripMode: ScripMode = url.searchParams.get('scrip') === 'observer' ? 'observer' : 'blocker';
+      const result = url.pathname === '/run-agent' && flightsParam === 'task'
+        ? await runTaskAgent(url.searchParams.get('model') ?? 'sonnet', mode, taskFrom(url), feedback, scripMode, send)
+        : url.pathname === '/run-agent'
         ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain', url.searchParams.get('scrip') === 'observer' ? 'observer' : 'blocker', send)
         : await runFlightTraceDemo({
           mode,

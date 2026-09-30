@@ -26,20 +26,24 @@ export function pageText(html: string): string {
   return html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
 }
 
-/** Which claimed facts appear in the page text. Price must appear as a dollar amount; "B6 615" also matches "B6615" or "B6-615". */
-export function findClaims(text: string, offer: FlightOffer): { priceShown: boolean; flightsShown: string[]; flightsMissing: string[] } {
-  const dollars = Math.floor(offer.totalCents / 100);
-  const cents = offer.totalCents % 100;
+/** Whether a dollar amount appears in text as money ("$1,053", "$1053", "$553.00"). */
+export function priceAppears(text: string, totalCents: number): boolean {
+  const dollars = Math.floor(totalCents / 100);
+  const cents = totalCents % 100;
   const whole = dollars.toLocaleString('en-US');
   const amount = `(?:${escapeRe(whole)}${whole.includes(',') ? `|${dollars}` : ''})`;
-  const price = new RegExp(`\\$\\s?${amount}${cents ? `\\.${String(cents).padStart(2, '0')}` : '(?:\\.00)?'}(?![\\d])`);
+  return new RegExp(`\\$\\s?${amount}${cents ? `\\.${String(cents).padStart(2, '0')}` : '(?:\\.00)?'}(?![\\d])`).test(text);
+}
+
+/** Which claimed facts appear in the page text. Price must appear as a dollar amount; "B6 615" also matches "B6615" or "B6-615". */
+export function findClaims(text: string, offer: FlightOffer): { priceShown: boolean; flightsShown: string[]; flightsMissing: string[] } {
   const flights = [...offer.outbound, ...offer.inbound].map(l => l.flight);
   const shown = flights.filter(f => {
     const m = /^([A-Z0-9]{2})\s*-?\s*(\d{1,4})$/i.exec(f.trim());
     const re = m ? new RegExp(`\\b${m[1]}\\s?-?${m[2]}\\b`, 'i') : new RegExp(escapeRe(f), 'i');
     return re.test(text);
   });
-  return { priceShown: price.test(text), flightsShown: shown, flightsMissing: flights.filter(f => !shown.includes(f)) };
+  return { priceShown: priceAppears(text, offer.totalCents), flightsShown: shown, flightsMissing: flights.filter(f => !shown.includes(f)) };
 }
 
 /** Only public https pages; never the local machine or private networks. */
