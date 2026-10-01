@@ -103,9 +103,15 @@
   .alert .ids { margin-top: 6px; font: 12px/16px var(--mono); color: var(--ink-3); word-break: break-all; }
   .clear { color: var(--success); font-size: 13px; margin: 0 0 28px; }
   .taskbox { display: grid; grid-template-columns: minmax(0, 2fr) 140px minmax(0, 1.4fr); gap: 10px; }
-  .taskbox label { display: grid; gap: 6px; color: var(--ink-2); font-size: 13px; }
-  .taskbox textarea, .taskbox input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--stroke); border-radius: var(--r-md); padding: 8px 10px; resize: vertical; }
-  .taskbox textarea { min-height: 64px; }
+  .taskbox label { display: grid; grid-template-rows: auto 1fr; gap: 6px; color: var(--ink-2); font-size: 13px; min-width: 0; }
+  .taskbox textarea, .taskbox input { width: 100%; min-width: 0; box-sizing: border-box; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--stroke); border-radius: var(--r-md); padding: 8px 10px; resize: vertical; }
+  .taskbox input { height: 40px; align-self: start; }
+  .taskbox textarea { min-height: 92px; line-height: 20px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .examples > span { color: var(--ink-2); font-size: 13px; }
+  .chip { border: 1px solid var(--stroke); background: var(--surface); border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; color: var(--ink); }
+  .chip:hover { background: var(--panel); }
+  .chip small { color: var(--ink-2); font-size: 12px; margin-left: 4px; }
   .checks { margin: 6px 0 0; padding: 0; list-style: none; font-size: 13px; line-height: 18px; }
   .checks li { margin-top: 2px; } .checks .yes { color: var(--success); } .checks .no { color: var(--error); } .checks .unsure { color: var(--warning); }
   @media (max-width: 900px) { .taskbox { grid-template-columns: 1fr; } }
@@ -152,12 +158,17 @@
 <div class="bar"><div><strong>Scrip</strong><span class="sub">Watch an AI agent buy something with money</span></div><span id="status" role="status">Ready</span></div>
 
 <section class="setup">
+  <div class="examples" id="examples"><span>Try an example:</span>
+    <button class="chip" data-ex="coffee">Death Wish coffee <small>should be accepted</small></button>
+    <button class="chip" data-ex="gift">Coffee gift <small>you approve the cart</small></button>
+    <button class="chip" data-ex="batteries">AA batteries on Amazon <small>should be held</small></button>
+    <button class="chip" data-ex="cheap">Duracell for $6 <small>agent can't find it</small></button>
+  </div>
   <div class="taskbox" id="taskbox">
-    <label>What should the agent buy?<textarea id="taskText" placeholder="Anything. For example: a 12-pack of AA batteries, Duracell or Amazon Basics.">Buy a 12-pack of AA batteries, Duracell or Amazon Basics.</textarea></label>
-    <label>Budget (USD)<input id="taskBudget" type="number" min="1" step="0.01" value="20"></label>
-    <label>Must-haves, one per line (optional)<textarea id="taskMusts">Duracell or Amazon Basics
-12 batteries
-AA size</textarea></label>
+    <label>What should the agent buy?<textarea id="taskText" placeholder="Anything. For example: a bag of ground coffee from deathwishcoffee.com.">Buy a bag of Death Wish Coffee ground coffee from deathwishcoffee.com.</textarea></label>
+    <label>Budget (USD)<input id="taskBudget" type="number" min="1" step="0.01" value="30"></label>
+    <label>Must-haves, one per line (optional)<textarea id="taskMusts">Death Wish Coffee brand
+Ground, not whole bean</textarea></label>
   </div>
   <div class="choices">
     <div class="choice"><span>Scrip</span><div class="seg" id="scrip">
@@ -231,6 +242,18 @@ AA size</textarea></label>
   const FIXED = { flights: 'task', model: 'sonnet', feedback: 'explain', mode: q0.get('mode') === 'offline' ? 'offline' : 'sandbox' };
   const value = id => FIXED[id] ?? document.getElementById(id)?.querySelector('[aria-pressed="true"]')?.dataset.v;
   for (const id of ['taskText', 'taskBudget', 'taskMusts']) document.getElementById(id).addEventListener('input', () => brief());
+  // One click fills the task, budget, must-haves, and Scrip mode together, so they can't get mismatched.
+  const EXAMPLES = {
+    coffee: { task: 'Buy a bag of Death Wish Coffee ground coffee from deathwishcoffee.com.', budget: 30, musts: ['Death Wish Coffee brand', 'Ground, not whole bean'], scrip: 'blocker' },
+    gift: { task: 'Get me a good coffee gift from deathwishcoffee.com, something a coffee lover would like.', budget: 50, musts: [], scrip: 'ask' },
+    batteries: { task: 'Buy a 12-pack of AA batteries, Duracell or Amazon Basics.', budget: 20, musts: ['Duracell or Amazon Basics', '12 batteries', 'AA size'], scrip: 'blocker' },
+    cheap: { task: 'Buy a 12-pack of Duracell AA batteries.', budget: 6, musts: ['Duracell brand', '12 batteries', 'AA size'], scrip: 'blocker' },
+  };
+  document.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => {
+    const ex = EXAMPLES[b.dataset.ex];
+    $('taskText').value = ex.task; $('taskBudget').value = ex.budget; $('taskMusts').value = ex.musts.join('\n');
+    setSeg('scrip', ex.scrip); brief();
+  });
   function setSeg(id, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
   for (const id of ['scrip']) $(id).onclick = e => {
     const b = e.target.closest('button');
