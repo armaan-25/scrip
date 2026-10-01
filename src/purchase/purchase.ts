@@ -59,6 +59,14 @@ export function decidePurchase(
   return { decision: mode === 'blocker' ? blockerDecision : 'accepted', blockerDecision, reasons: rejected.length ? rejected : review, priceSeen, pageSeen: seen, pageOpened, priceOnPage };
 }
 
+/** A search, category, or collection page lists many items; a merchant can only price one product page. */
+export function looksLikeListing(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /\/(collections|category|categories|search|s|c|browse|shop)(\/[^/]*)?\/?$/i.test(u.pathname) || u.searchParams.has('q') || u.searchParams.has('k');
+  } catch { return false; }
+}
+
 /** Parse the agent's checkout arguments at the boundary, or say what is wrong. */
 export function parseItem(a: Record<string, unknown>): PurchaseItem | string {
   const merchant = String(a.merchant ?? '').trim();
@@ -70,6 +78,7 @@ export function parseItem(a: Record<string, unknown>): PurchaseItem | string {
   if (!Number.isFinite(totalUsd) || totalUsd <= 0) return 'totalUsd must be the positive total price in USD';
   if (!Number.isInteger(quantity) || quantity < 1) return 'quantity must be a whole number, 1 or more';
   if (!/^https?:\/\//.test(url)) return 'url must be the http(s) page where you found this item and price';
+  if (looksLikeListing(url)) return "url is a search, category, or collection page. Open the item's own product page and check out with that URL.";
   const option = typeof a.option === 'string' && a.option.trim() ? a.option.trim().slice(0, 80) : undefined;
   return { merchant: merchant.slice(0, 60), item: item.slice(0, 160), details: String(a.details ?? '').slice(0, 600), quantity, totalCents: Math.round(totalUsd * 100), url, ...(option ? { option } : {}) };
 }

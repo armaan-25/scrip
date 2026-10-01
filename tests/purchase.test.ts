@@ -43,6 +43,10 @@ describe('decidePurchase', () => {
     expect(parseItem({ merchant: 'Amazon', item: 'x', totalUsd: 11.49, url: 'https://a.com' })).toMatchObject({ totalCents: 1149, quantity: 1 });
     expect(parseItem({ merchant: 'Amazon', item: 'x', totalUsd: 0, url: 'https://a.com' })).toMatch(/totalUsd/);
     expect(parseItem({ merchant: 'Amazon', item: 'x', totalUsd: 5, url: 'ftp://a' })).toMatch(/url/);
+    expect(parseItem({ merchant: 'Death Wish', item: 'x', totalUsd: 5, url: 'https://www.deathwishcoffee.com/collections/ground' })).toMatch(/product page/);
+    expect(parseItem({ merchant: 'Amazon', item: 'x', totalUsd: 5, url: 'https://www.amazon.com/s?k=aa+batteries' })).toMatch(/product page/);
+    expect(typeof parseItem({ merchant: 'Death Wish', item: 'x', totalUsd: 5, url: 'https://www.deathwishcoffee.com/products/death-wish-coffee' })).toBe('object');
+    expect(typeof parseItem({ merchant: 'Amazon', item: 'x', totalUsd: 5, url: 'https://www.amazon.com/AmazonBasics-AA/dp/B07KWYGTC6' })).toBe('object');
   });
 });
 

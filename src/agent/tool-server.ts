@@ -105,7 +105,7 @@ const TASK_CHECKOUT = {
       option: { type: 'string', description: 'Size, color, or other option exactly as the store names it (e.g. "9" or "9 / Black"), if the item has options' },
       quantity: { type: 'integer' },
       totalUsd: { type: 'number', description: 'Total price in USD, as shown on the page' },
-      url: { type: 'string', description: 'The page where you found this item and price' },
+      url: { type: 'string', description: "The item's own product page (not a search, category, or collection page); the merchant prices the order from it" },
     },
     required: ['merchant', 'item', 'details', 'totalUsd', 'url'],
   },
