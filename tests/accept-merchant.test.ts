@@ -58,12 +58,14 @@ describe("the store's own cart", () => {
     const http = async (req: { method: 'GET' | 'POST'; url: string; body?: string; cookie?: string }) => {
       calls.push([req.method, req.url, req.body, req.cookie].filter(Boolean).join(' '));
       if (req.method === 'POST') return { status: 200, text: '{}', setCookies: ['cart=abc; path=/; HttpOnly', 'other=1'] };
+      if (!req.cookie) return { status: 200, text: '{"items":[]}', setCookies: ['session=s1; path=/'] };
       return { status: 200, text: JSON.stringify({ token: 'tokenvalue123456', total_price: 3598, items: [{ product_title: 'Dark Roast Coffee', variant_title: 'Ground / 1 lb', quantity: 2, final_line_price: 3598, sku: '50251G' }] }), setCookies: [] };
     };
     const reply = await merchantOrder('https://www.deathwishcoffee.com/products/death-wish-coffee', 2, async () => ({ status: 200, text: json }), 'Ground, 1 lb', http);
     expect(calls).toEqual([
-      'POST https://www.deathwishcoffee.com/cart/add.js {"items":[{"id":11,"quantity":2}]}',
-      'GET https://www.deathwishcoffee.com/cart.js cart=abc; other=1',
+      'GET https://www.deathwishcoffee.com/cart.js',
+      'POST https://www.deathwishcoffee.com/cart/add.js {"items":[{"id":11,"quantity":2}]} session=s1',
+      'GET https://www.deathwishcoffee.com/cart.js session=s1; cart=abc; other=1',
     ]);
     expect(reply).toMatchObject({ status: 'priced', order: { source: 'cart', variant: 'Ground / 1 lb', quantity: 2, totalCents: 3598, sku: '50251G', cartToken: 'tokenvalue12' } });
   });
@@ -72,5 +74,16 @@ describe("the store's own cart", () => {
     const json = JSON.stringify({ product: { title: 'Dark Roast', variants: [{ id: 11, title: 'Ground / 1 lb', price: '19.99' }] } });
     const reply = await merchantOrder('https://shop.example/products/dark', 1, async () => ({ status: 200, text: json }), undefined, async () => ({ status: 403, text: '', setCookies: [] }));
     expect(reply).toMatchObject({ status: 'priced', order: { source: 'shopify', totalCents: 1999 } });
+  });
+});
+
+describe("the store's own cart, when the store redirects the cart read", () => {
+  it("uses the store's reply to the add (its computed line) if the cart read comes back empty", async () => {
+    const json = JSON.stringify({ product: { title: 'Ridge Wallet', variants: [{ id: 5, title: 'Default Title', price: '175.00' }] } });
+    const http = async (req: { method: 'GET' | 'POST'; url: string; body?: string; cookie?: string }) => req.method === 'POST'
+      ? { status: 200, text: JSON.stringify({ items: [{ product_title: 'Ridge Wallet + Power Bank', variant_title: null, quantity: 1, final_line_price: 17500, sku: 'RW-PB' }] }), setCookies: ['cart=r1'] }
+      : { status: 200, text: '{"items":[],"total_price":0}', setCookies: [] };
+    const reply = await merchantOrder('https://www.ridgewallet.com/products/wallet-power-bank', 1, async () => ({ status: 200, text: json }), undefined, http);
+    expect(reply).toMatchObject({ status: 'priced', order: { source: 'cart', totalCents: 17500, sku: 'RW-PB', quantity: 1 } });
   });
 });

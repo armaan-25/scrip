@@ -126,12 +126,27 @@ interface ShopifyCart { token?: string; total_price?: number; currency?: string;
 
 /** Build a fresh cart at the store with exactly this variant and quantity, and read back the store's own cart. */
 export async function buildStoreCart(origin: string, variantId: number, quantity: number, http: CartHttp): Promise<ShopifyCart | null> {
-  const add = await http({ method: 'POST', url: `${origin}/cart/add.js`, body: JSON.stringify({ items: [{ id: variantId, quantity }] }) });
+  // Keep one cookie jar across all three requests: some stores only link the add and the read when the
+  // session is opened first, otherwise the read lands on a fresh, empty cart.
+  const jar = new Map<string, string>();
+  const keep = (setCookies: string[]) => { for (const c of setCookies) { const [pair] = c.split(';'); const i = pair?.indexOf('=') ?? -1; if (pair && i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1)); } };
+  const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join('; ') || undefined;
+  const open = await http({ method: 'GET', url: `${origin}/cart.js` });
+  keep(open.setCookies);
+  const add = await http({ method: 'POST', url: `${origin}/cart/add.js`, body: JSON.stringify({ items: [{ id: variantId, quantity }] }), cookie: cookie() });
   if (add.status >= 400) return null;
-  const cookie = add.setCookies.map(c => c.split(';')[0]).filter(Boolean).join('; ');
-  const read = await http({ method: 'GET', url: `${origin}/cart.js`, cookie });
-  if (read.status >= 400) return null;
-  try { return JSON.parse(read.text) as ShopifyCart; } catch { return null; }
+  keep(add.setCookies);
+  // The store's reply to the add is already its own computed line for this item. Prefer the full cart when the
+  // read returns exactly our item; some stores redirect /cart.js somewhere the session doesn't follow.
+  let added: ShopifyCart['items'] = [];
+  try { const body = JSON.parse(add.text) as { items?: ShopifyCart['items'] } & NonNullable<ShopifyCart['items']>[number]; added = body.items ?? (body.product_title ? [body] : []); } catch { added = []; }
+  const read = await http({ method: 'GET', url: `${origin}/cart.js`, cookie: cookie() });
+  let cart: ShopifyCart | null = null;
+  try { cart = read.status < 400 ? (JSON.parse(read.text) as ShopifyCart) : null; } catch { cart = null; }
+  if (cart?.items?.length === 1 && (cart.total_price ?? 0) > 0) return cart;
+  const line = added?.length === 1 ? added[0] : undefined;
+  if (line && typeof line.final_line_price === 'number' && line.final_line_price > 0) return { token: cart?.token, total_price: line.final_line_price, items: [line] };
+  return null;
 }
 
 /** The merchant's side of the order: the store's own cart where possible, else its catalog, else unavailable. */

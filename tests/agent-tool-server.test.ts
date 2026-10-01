@@ -169,6 +169,7 @@ describe('ScripToolServer, any purchase', () => {
   let cartDiscountCents = 0;
   const cartHttp = async (req: { method: 'GET' | 'POST'; url: string; body?: string; cookie?: string }) => {
     if (req.method === 'POST') { lastQty = (JSON.parse(req.body ?? '{}') as { items: { quantity: number }[] }).items[0]?.quantity ?? 0; return { status: 200, text: '{}', setCookies: ['cart=c1; path=/'] }; }
+    if (!req.cookie) return { status: 200, text: '{"items":[]}', setCookies: [] };
     if (req.cookie !== 'cart=c1' || storePrice === null) return { status: 404, text: '', setCookies: [] };
     const line = Math.round(Number(storePrice) * 100) * lastQty - cartDiscountCents;
     return { status: 200, text: JSON.stringify({ token: 'tok123456789xyz', total_price: line, items: [{ product_title: 'Amazon Basics AA Batteries 12-Pack', variant_title: null, quantity: lastQty, final_line_price: line, sku: 'AA12' }] }), setCookies: [] };
