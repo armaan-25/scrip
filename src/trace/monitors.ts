@@ -131,9 +131,9 @@ export function monitorAlerts(events: RecordedEvent[]): Alert[] {
   for (const e of events) {
     if (e.type !== 'merchant_order') continue;
     if (e.data.reply.status === 'unavailable') {
-      alerts.push({ kind: 'no_order_details', severity: 'warning', title: 'Merchant sent no order details', detail: `Nothing independent confirms what is being bought: ${e.data.reply.reason}.`, refs });
+      alerts.push({ kind: 'no_order_details', severity: 'warning', title: 'No store cart to verify against', detail: `Nothing from the store confirms what is being bought: ${e.data.reply.reason}.`, refs });
     } else if (e.data.comparison && !e.data.comparison.match) {
-      alerts.push({ kind: 'fingerprint_mismatch', severity: 'serious', title: "Merchant's order doesn't match what was approved", detail: e.data.comparison.differences.join('; ') + '.', refs });
+      alerts.push({ kind: 'fingerprint_mismatch', severity: 'serious', title: "Store's cart doesn't match the agent's checkout", detail: e.data.comparison.differences.join('; ') + '.', refs });
     }
   }
 

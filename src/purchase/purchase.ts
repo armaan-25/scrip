@@ -105,7 +105,7 @@ export function decideWithMerchant(
     else { blockerDecision = 'accepted'; reasons = []; }
   } else {
     blockerDecision = 'in_review';
-    reasons = [`no merchant order details: ${merchant.reason}`, ...verdict.reasons];
+    reasons = [`can't verify with the store: ${merchant.reason}`, ...verdict.reasons];
   }
   return { decision: mode === 'blocker' ? blockerDecision : 'accepted', blockerDecision, reasons };
 }

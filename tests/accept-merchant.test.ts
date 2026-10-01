@@ -11,7 +11,7 @@ describe('stand-in Accept merchant', () => {
   it('prices from schema.org Product markup, and says so plainly when a store publishes nothing', async () => {
     const page = '<script type="application/ld+json">{"@type":"Product","name":"DDIA","offers":{"price":"59.99"}}</script>';
     expect(await merchantOrder('https://porchlightbooks.com/p/ddia', 1, async () => ({ status: 200, text: page }))).toMatchObject({ status: 'priced', order: { totalCents: 5999, source: 'schema.org' } });
-    expect(await merchantOrder('https://www.amazon.com/dp/X', 1, async () => ({ status: 200, text: '<html></html>' }))).toEqual({ status: 'unavailable', reason: 'amazon.com publishes no machine-readable order data, so it sent no order details' });
+    expect(await merchantOrder('https://www.amazon.com/dp/X', 1, async () => ({ status: 200, text: '<html></html>' }))).toEqual({ status: 'unavailable', reason: 'amazon.com has no public cart or order data to read' });
     expect((await merchantOrder('https://www.bestbuy.com/x', 1, async () => ({ status: 403, text: '' }))).status).toBe('unavailable');
   });
 
@@ -48,5 +48,29 @@ describe('stand-in Accept merchant', () => {
     }
     const r = await merchantOrder('https://shop.example/products/dark', 1, fetchPage, 'Ground, 2 lb');
     expect(r.status === 'priced' && r.order.optionMatched).toBe(false);
+  });
+});
+
+describe("the store's own cart", () => {
+  it('builds a cart with the exact variant and quantity, and uses the cart total, not the catalog price', async () => {
+    const json = JSON.stringify({ product: { title: 'Dark Roast', variants: [{ id: 11, title: 'Ground / 1 lb', price: '19.99' }] } });
+    const calls: string[] = [];
+    const http = async (req: { method: 'GET' | 'POST'; url: string; body?: string; cookie?: string }) => {
+      calls.push([req.method, req.url, req.body, req.cookie].filter(Boolean).join(' '));
+      if (req.method === 'POST') return { status: 200, text: '{}', setCookies: ['cart=abc; path=/; HttpOnly', 'other=1'] };
+      return { status: 200, text: JSON.stringify({ token: 'tokenvalue123456', total_price: 3598, items: [{ product_title: 'Dark Roast Coffee', variant_title: 'Ground / 1 lb', quantity: 2, final_line_price: 3598, sku: '50251G' }] }), setCookies: [] };
+    };
+    const reply = await merchantOrder('https://www.deathwishcoffee.com/products/death-wish-coffee', 2, async () => ({ status: 200, text: json }), 'Ground, 1 lb', http);
+    expect(calls).toEqual([
+      'POST https://www.deathwishcoffee.com/cart/add.js {"items":[{"id":11,"quantity":2}]}',
+      'GET https://www.deathwishcoffee.com/cart.js cart=abc; other=1',
+    ]);
+    expect(reply).toMatchObject({ status: 'priced', order: { source: 'cart', variant: 'Ground / 1 lb', quantity: 2, totalCents: 3598, sku: '50251G', cartToken: 'tokenvalue12' } });
+  });
+
+  it("falls back to the catalog, labeled as such, when the store's cart can't be built", async () => {
+    const json = JSON.stringify({ product: { title: 'Dark Roast', variants: [{ id: 11, title: 'Ground / 1 lb', price: '19.99' }] } });
+    const reply = await merchantOrder('https://shop.example/products/dark', 1, async () => ({ status: 200, text: json }), undefined, async () => ({ status: 403, text: '', setCookies: [] }));
+    expect(reply).toMatchObject({ status: 'priced', order: { source: 'shopify', totalCents: 1999 } });
   });
 });

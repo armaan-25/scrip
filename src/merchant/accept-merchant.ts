@@ -1,5 +1,13 @@
 /**
- * Stand-in for a Natural Accept merchant sending order details at payment.
+ * The merchant's side of the order: what the store itself says is being bought.
+ *
+ * For Shopify stores Scrip builds a REAL cart at the store (the exact variant
+ * and quantity the agent chose, via the store's public cart API) and reads
+ * back the store's own computed cart: items, option, quantity, SKU, total.
+ * Nothing is bought; the cart is abandoned. Other stores fall back to their
+ * published catalog data (labeled as such), or to "unavailable".
+ *
+ * Originally a stand-in for a Natural Accept merchant sending order details at payment.
  *
  * Natural does not yet pass merchant order details to the card side; this
  * module plays that merchant. It is separate from Scrip and never uses the
@@ -19,7 +27,11 @@ import { orderFingerprint } from '../trace/fingerprint.js';
 /** The fields both sides agree on. Product titles are shown, not compared: stores and agents word them differently. */
 export interface CanonicalOrder { store: string; product: string; quantity: number; totalCents: number; /** Size, color, or other option; compared when the store has options. */ variant?: string }
 export interface MerchantOrder extends CanonicalOrder {
-  title: string; unitCents: number; source: 'shopify' | 'schema.org';
+  title: string; unitCents: number;
+  /** cart: the store's own cart, built at the store. shopify / schema.org: published catalog price, not a cart. */
+  source: 'cart' | 'shopify' | 'schema.org';
+  sku?: string;
+  cartToken?: string;
   /** True when the store found the option the agent named (so the approved order can use the store's own name for it). */
   optionMatched?: boolean;
 }
@@ -65,7 +77,7 @@ const cents = (v: unknown): number | null => {
  * link (?variant=), else the option the agent named (matched to the store's
  * own option names, e.g. "9" or "9 / Black"), else its first available one.
  */
-function fromShopify(json: unknown, variantId: string | null, wanted: string | undefined): { title: string; variant?: string; unitCents: number; optionMatched: boolean } | null {
+function fromShopify(json: unknown, variantId: string | null, wanted: string | undefined): { title: string; variant?: string; variantId: number; unitCents: number; optionMatched: boolean } | null {
   const product = (json as { product?: { title?: string; variants?: { id?: number; title?: string; price?: string; available?: boolean }[] } }).product;
   const variants = product?.variants ?? [];
   // Every part of the store's option name must appear in what the agent named: store "9" matches "Jet Black / 9" and
@@ -77,8 +89,8 @@ function fromShopify(json: unknown, variantId: string | null, wanted: string | u
   const byName = wanted ? variants.find(v => { const vp = parts(v.title); return vp.length > 0 && vp.every(contains); }) : undefined;
   const chosen = (variantId && variants.find(v => String(v.id) === variantId)) || byName || variants.find(v => v.available !== false) || variants[0];
   const unit = cents(chosen?.price);
-  if (!product?.title || !chosen || unit === null) return null;
-  return { title: product.title, variant: chosen.title && chosen.title !== 'Default Title' ? chosen.title : undefined, unitCents: unit, optionMatched: Boolean(byName && chosen === byName) };
+  if (!product?.title || !chosen || unit === null || typeof chosen.id !== 'number') return null;
+  return { title: product.title, variant: chosen.title && chosen.title !== 'Default Title' ? chosen.title : undefined, variantId: chosen.id, unitCents: unit, optionMatched: Boolean(byName && chosen === byName) };
 }
 
 /** schema.org Product markup (JSON-LD) on the page: name and the first offer's price. */
@@ -99,8 +111,31 @@ function fromSchemaOrg(html: string): { title: string; unitCents: number } | nul
   return null;
 }
 
-/** The merchant prices the order from its own data, or says it can't. */
-export async function merchantOrder(url: string, quantity: number, fetchPage: FetchPage, wantedOption?: string): Promise<MerchantReply> {
+/** Minimal HTTP with cookies, for the store's cart session. Injectable so tests never touch real stores. */
+export type CartHttp = (req: { method: 'GET' | 'POST'; url: string; body?: string; cookie?: string }) => Promise<{ status: number; text: string; setCookies: string[] }>;
+
+export const liveCartHttp: CartHttp = async ({ method, url, body, cookie }) => {
+  const res = await fetch(url, {
+    method, body, signal: AbortSignal.timeout(10_000),
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Scrip cart check)', ...(cookie ? { cookie } : {}) },
+  });
+  return { status: res.status, text: await res.text(), setCookies: res.headers.getSetCookie() };
+};
+
+interface ShopifyCart { token?: string; total_price?: number; currency?: string; items?: { product_title?: string; variant_title?: string | null; quantity?: number; final_line_price?: number; sku?: string; url?: string }[] }
+
+/** Build a fresh cart at the store with exactly this variant and quantity, and read back the store's own cart. */
+export async function buildStoreCart(origin: string, variantId: number, quantity: number, http: CartHttp): Promise<ShopifyCart | null> {
+  const add = await http({ method: 'POST', url: `${origin}/cart/add.js`, body: JSON.stringify({ items: [{ id: variantId, quantity }] }) });
+  if (add.status >= 400) return null;
+  const cookie = add.setCookies.map(c => c.split(';')[0]).filter(Boolean).join('; ');
+  const read = await http({ method: 'GET', url: `${origin}/cart.js`, cookie });
+  if (read.status >= 400) return null;
+  try { return JSON.parse(read.text) as ShopifyCart; } catch { return null; }
+}
+
+/** The merchant's side of the order: the store's own cart where possible, else its catalog, else unavailable. */
+export async function merchantOrder(url: string, quantity: number, fetchPage: FetchPage, wantedOption?: string, http?: CartHttp): Promise<MerchantReply> {
   const where = canonicalProduct(url);
   if (!where) return { status: 'unavailable', reason: 'the product address is not a valid URL' };
   const u = new URL(url);
@@ -111,14 +146,25 @@ export async function merchantOrder(url: string, quantity: number, fetchPage: Fe
         let parsed: unknown = null;
         try { parsed = JSON.parse(json.text); } catch { parsed = null; }
         const found = parsed ? fromShopify(parsed, u.searchParams.get('variant'), wantedOption) : null;
-        if (found) return { status: 'priced', order: { ...where, ...found, quantity, totalCents: found.unitCents * quantity, source: 'shopify' } };
+        if (found && http) {
+          const cart = await buildStoreCart(u.origin, found.variantId, quantity, http);
+          const line = cart?.items?.length === 1 ? cart.items[0] : undefined;
+          if (cart && line && typeof cart.total_price === 'number' && typeof line.quantity === 'number') {
+            return { status: 'priced', order: {
+              ...where, title: line.product_title ?? found.title, variant: line.variant_title ?? undefined, optionMatched: found.optionMatched,
+              unitCents: Math.round((line.final_line_price ?? cart.total_price) / line.quantity), quantity: line.quantity, totalCents: cart.total_price,
+              source: 'cart', ...(line.sku ? { sku: line.sku } : {}), ...(cart.token ? { cartToken: cart.token.slice(0, 12) } : {}),
+            } };
+          }
+        }
+        if (found) { const { variantId: _id, ...rest } = found; return { status: 'priced', order: { ...where, ...rest, quantity, totalCents: found.unitCents * quantity, source: 'shopify' } }; }
       }
     }
     const page = await fetchPage(url);
-    if (page.status >= 400) return { status: 'unavailable', reason: `${where.store} refused the request (HTTP ${page.status}), so it sent no order details` };
+    if (page.status >= 400) return { status: 'unavailable', reason: `${where.store} refused the request (HTTP ${page.status}), so there is no cart or order data to read` };
     const found = fromSchemaOrg(page.text);
     if (found) return { status: 'priced', order: { ...where, ...found, quantity, totalCents: found.unitCents * quantity, source: 'schema.org' } };
-    return { status: 'unavailable', reason: `${where.store} publishes no machine-readable order data, so it sent no order details` };
+    return { status: 'unavailable', reason: `${where.store} has no public cart or order data to read` };
   } catch (error) {
     return { status: 'unavailable', reason: `${where.store} could not be reached (${(error as Error).message})` };
   }

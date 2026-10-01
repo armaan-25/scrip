@@ -112,20 +112,20 @@ const SOURCES: Record<Exclude<FlightSource, 'task'>, { requirements: FlightRequi
 };
 
 /** Any purchase: the person's words verbatim, their budget and must-haves, a real agent on the web, and the merchant wallet. */
-async function runTaskAgent(modelId: string, mode: 'offline' | 'sandbox', task: PurchaseTask, refusalFeedback: Feedback, scripMode: ScripMode, send: Send) {
+async function runTaskAgent(modelId: string, mode: 'offline' | 'sandbox', task: PurchaseTask, refusalFeedback: Feedback, scripMode: ScripMode, askFirst: boolean, send: Send) {
   const profile = TASK_MODELS.find(m => m.id === modelId) ?? TASK_MODELS[0];
   if (!profile) throw new Error('No task model');
   const agent = agentFor(profile.id, 'task');
   const scenario = `real:task-${profile.id}`;
   const merchant = setupMerchantRail(mode, `scrip-task-${Date.now()}`, 'Merchant (simulated)');
   send('log', { line: mode === 'sandbox' ? 'Live on Natural\'s sandbox. Accepted checkouts are paid as a transfer to the "Merchant (simulated)" wallet.' : 'Offline: simulated Natural.' });
-  send('log', { line: `Real agent: ${profile.label}, working on the live web. Scrip is in ${scripMode} mode; must-haves are checked by a separate Claude Haiku call, recorded in the trace. No real store is paid; a Natural wallet stands in for it.` });
+  send('log', { line: `Real agent: ${profile.label}, working on the live web. Scrip is in ${askFirst ? 'ask-me-first' : scripMode} mode; must-haves are checked by a separate Claude Haiku call, recorded in the trace. No real store is paid; a Natural wallet stands in for it.` });
   const step = stepSender(send);
   service.onEvent = e => step(scenario, e);
   const traceId = service.start('armaan', task.words);
   try {
     service.confirmTask(traceId, { budgetCents: task.budgetCents, musts: task.musts });
-    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: '', merchant, scripMode, flights: 'task', task, refusalFeedback });
+    contexts.set(traceId, { traceId, agent: agent.auth, mandateId: '', merchant, scripMode, flights: 'task', task, refusalFeedback, askFirst });
     const prompt = `Customer request: "${task.words}"\nBudget: $${(task.budgetCents / 100).toFixed(2)} total.${task.musts.length ? `\nMust-haves:\n${task.musts.map(m => `- ${m}`).join('\n')}` : ''}`;
     service.recordAgent(traceId, { type: 'agent_run_started', data: { agentVersionId: agent.versionId, profile: scenario.slice(5), model: profile.model, prompt, refusalFeedback } });
     const toolNames = new Map<string, string>();
@@ -293,7 +293,7 @@ const server = http.createServer(async (req, res) => {
       const feedback: Feedback = url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain';
       const scripMode: ScripMode = url.searchParams.get('scrip') === 'observer' ? 'observer' : 'blocker';
       const result = url.pathname === '/run-agent' && flightsParam === 'task'
-        ? await runTaskAgent(url.searchParams.get('model') ?? 'sonnet', mode, taskFrom(url), feedback, scripMode, send)
+        ? await runTaskAgent(url.searchParams.get('model') ?? 'sonnet', mode, taskFrom(url), feedback, scripMode, url.searchParams.get('scrip') === 'ask', send)
         : url.pathname === '/run-agent'
         ? await runRealAgent(url.searchParams.get('profile') ?? 'careful', mode, url.searchParams.get('flights') === 'web' ? 'web' : 'catalog', url.searchParams.get('request') ?? 'precise', url.searchParams.get('feedback') === 'ask_customer' ? 'ask_customer' : 'explain', url.searchParams.get('scrip') === 'observer' ? 'observer' : 'blocker', send)
         : await runFlightTraceDemo({

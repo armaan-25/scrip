@@ -27,7 +27,7 @@ import type { FlightSource } from './profiles.js';
 import type { MerchantRail } from '../rails/merchant-rail.js';
 import { decideCheckout, type ScripMode } from './checkout.js';
 import { decidePurchase, decideWithMerchant, parseItem, type PurchaseItem, type PurchaseTask } from '../purchase/purchase.js';
-import { canonicalProduct, compareOrders, merchantOrder } from '../merchant/accept-merchant.js';
+import { canonicalProduct, type CartHttp, compareOrders, liveCartHttp, merchantOrder } from '../merchant/accept-merchant.js';
 import { judgeMusts, type JudgeRunner, claudeJudge } from '../purchase/judge.js';
 import { checkSource, type FetchPage, fetchPublicPage } from './source-check.js';
 
@@ -41,6 +41,8 @@ export interface RunContext {
   merchant?: MerchantRail;
   /** Task runs: what the person asked for and confirmed. */
   task?: PurchaseTask;
+  /** Task runs: hold even a fully checked cart until the person approves it (for open-ended requests). */
+  askFirst?: boolean;
   /** Defaults to catalog. */
   flights?: FlightSource;
   /** Offers the agent submitted from the web in this run, by Scrip-assigned id. */
@@ -151,6 +153,7 @@ export class ScripToolServer {
     private log: (line: string) => void = () => {},
     private fetchPage: FetchPage = fetchPublicPage,
     private judge: JudgeRunner = claudeJudge,
+    private cartHttp: CartHttp = liveCartHttp,
   ) {}
 
   /** Handle one JSON-RPC message. Returns null for notifications (no reply). */
@@ -304,14 +307,16 @@ export class ScripToolServer {
     const evidence = decidePurchase(ctx.task, item, research, cited, judged.checks, mode);
     // The stand-in Accept merchant prices the order from the store's own data; its fingerprint is compared with the approved order's.
     const where = canonicalProduct(item.url);
-    const reply = await merchantOrder(item.url, item.quantity, this.fetchPage, item.option);
+    const reply = await merchantOrder(item.url, item.quantity, this.fetchPage, item.option, this.cartHttp);
     // Options are compared only when the store has them (Shopify variants); otherwise both sides leave it empty.
     // When the store recognizes the agent's option ("Jet Black / 9" = store's "9"), the approved order uses the store's name for it.
-    const option = reply.status === 'priced' && reply.order.source === 'shopify' ? (reply.order.optionMatched ? reply.order.variant : item.option) : undefined;
+    const option = reply.status === 'priced' && reply.order.source !== 'schema.org' ? (reply.order.optionMatched ? reply.order.variant : item.option) : undefined;
     const approved = where ? { ...where, quantity: item.quantity, totalCents: item.totalCents, ...(option ? { variant: option } : {}) } : null;
     const comparison = reply.status === 'priced' && approved ? compareOrders(approved, reply.order) : undefined;
     this.service.recordMerchantOrder(ctx.traceId, { attemptId, approved, reply, ...(comparison ? { comparison } : {}) });
-    const verdict = { ...evidence, ...decideWithMerchant(evidence, reply.status === 'priced' ? { status: 'priced', match: comparison?.match ?? false, differences: comparison?.differences ?? [] } : reply, mode) };
+    const decided = decideWithMerchant(evidence, reply.status === 'priced' ? { status: 'priced', match: comparison?.match ?? false, differences: comparison?.differences ?? [] } : reply, mode);
+    const askNow = ctx.askFirst && decided.decision === 'accepted';
+    const verdict = { ...evidence, ...decided, ...(askNow ? { decision: 'in_review' as const, blockerDecision: 'in_review' as const, reasons: ["waiting for you to approve the store's cart"] } : {}) };
     this.service.recordPurchaseChecked(ctx.traceId, { attemptId, item, priceSeen: verdict.priceSeen, pageSeen: verdict.pageSeen, pageOpened: verdict.pageOpened, priceOnPage: verdict.priceOnPage, checks: judged.checks, checkerModel: judged.model, ...(judged.error ? { checkerError: judged.error } : {}) });
     this.service.recordAttempt(ctx.traceId, { attemptId, label: `${item.item} (${item.merchant})`, amountCents: item.totalCents, item, sourceUrl: item.url, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
     if (verdict.decision === 'rejected') {

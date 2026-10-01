@@ -101,13 +101,17 @@ accepts the rest. Must-haves are
 plain words, so a separate Claude Haiku call judges each one (`src/purchase/judge.ts`)
 and its answers are recorded next to the payment.
 
-**Order-details fingerprint.** A stand-in Natural Accept merchant (`src/merchant/accept-merchant.ts`),
-separate from Scrip, builds the order it would charge for from the store's own
-structured data (Shopify product JSON or schema.org Product markup), never from the
-agent. Scrip fingerprints the approved order (store, product, option, quantity, total)
-and the merchant's order over the same fields: a match pays, any difference is
-rejected with the differing fields named, and a store that publishes no order data
-(Amazon, Best Buy, ...) is held for review because nothing independent confirms it. Accepted and approved checkouts
+**Cart fingerprint.** For Shopify stores, Scrip builds a real cart at the store with the
+exact option and quantity the agent chose (the store's public cart API) and reads back
+the store's own computed cart: item, option, quantity, SKU, total
+(`src/merchant/accept-merchant.ts`). Nothing is ordered; the cart is abandoned. Scrip
+fingerprints the agent's checkout and the store's cart over the same fields (store,
+product, option, quantity, total): a match pays, any difference is rejected with the
+differing fields named. Stores with no public cart fall back to their published catalog
+price (labeled as not a cart), and stores with neither (Amazon, Best Buy, ...) are held
+for review because nothing from the store confirms the purchase. **Ask me first** holds
+even a fully checked cart until the person approves it, for open-ended requests. The
+sandbox transfer stands in for minting a card locked to that store and exact cart total. Accepted and approved checkouts
 move sandbox money to a "Merchant (simulated)" Natural wallet; no real store is paid.
 
 ### Real AI agents, per-version track record

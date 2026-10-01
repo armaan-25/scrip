@@ -165,14 +165,24 @@ describe('ScripToolServer, any purchase', () => {
   const store = async (url: string) => (url === `${shopUrl}.json` && storePrice !== null
     ? { status: 200, text: JSON.stringify({ product: { title: 'Amazon Basics AA Batteries 12-Pack', variants: [{ id: 1, title: 'Default Title', price: storePrice, available: true }] } }) }
     : { status: 200, text: '<html>no product data</html>' });
-  const setup = (scripMode: 'blocker' | 'observer') => {
+  // A fake store cart: adding the variant returns a session cookie; reading the cart returns the store's own totals.
+  let cartDiscountCents = 0;
+  const cartHttp = async (req: { method: 'GET' | 'POST'; url: string; body?: string; cookie?: string }) => {
+    if (req.method === 'POST') { lastQty = (JSON.parse(req.body ?? '{}') as { items: { quantity: number }[] }).items[0]?.quantity ?? 0; return { status: 200, text: '{}', setCookies: ['cart=c1; path=/'] }; }
+    if (req.cookie !== 'cart=c1' || storePrice === null) return { status: 404, text: '', setCookies: [] };
+    const line = Math.round(Number(storePrice) * 100) * lastQty - cartDiscountCents;
+    return { status: 200, text: JSON.stringify({ token: 'tok123456789xyz', total_price: line, items: [{ product_title: 'Amazon Basics AA Batteries 12-Pack', variant_title: null, quantity: lastQty, final_line_price: line, sku: 'AA12' }] }), setCookies: [] };
+  };
+  let lastQty = 0;
+  const setup = (scripMode: 'blocker' | 'observer', askFirst = false) => {
     merchant = new FakeMerchantRail('Merchant (simulated)');
     verdict = 'yes';
     storePrice = '11.49';
+    cartDiscountCents = 0;
     traceId = world.service.start('armaan', task.words);
     world.service.confirmTask(traceId, { budgetCents: task.budgetCents, musts: task.musts });
     const judge = async () => JSON.stringify([{ must: task.musts[0], verdict, reason: 'from the description' }]);
-    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: '', merchant, scripMode, flights: 'task', task }]]), () => {}, store, judge);
+    server = new ScripToolServer(world.service, new Map([[traceId, { traceId, agent: world.agent, mandateId: '', merchant, scripMode, flights: 'task', task, askFirst }]]), () => {}, store, judge, cartHttp);
   };
   const last = () => runActivity(world.service.events(traceId)).attempts.at(-1);
   const kinds = () => monitorAlerts(world.service.events(traceId)).map(a => a.kind);
@@ -185,7 +195,26 @@ describe('ScripToolServer, any purchase', () => {
     expect((await call('checkout', batteries)).text).toMatch(/accepted/);
     expect(merchant.transfers).toMatchObject([{ amountCents: 1149, status: 'COMPLETED', to: 'Merchant (simulated)' }]);
     expect(last()?.merchantOrder?.comparison).toMatchObject({ match: true, differences: [] });
+    expect(last()?.merchantOrder?.reply).toMatchObject({ status: 'priced', order: { source: 'cart', sku: 'AA12', totalCents: 1149 } });
     expect(kinds()).toEqual([]);
+  });
+
+  it("rejects when the store's own cart total differs from what the agent proposed (e.g. a discount or price change)", async () => {
+    setup('blocker');
+    cartDiscountCents = 150;
+    read(shopUrl, 'Amazon Basics AA 12-pack $11.49');
+    expect((await call('checkout', batteries)).text).toMatch(/rejected/);
+    expect(last()?.reasons).toContain('total: approved $11.49, merchant charging $9.99');
+  });
+
+  it('ask me first: a fully checked cart still waits for the person, and approving pays', async () => {
+    setup('blocker', true);
+    read(shopUrl, 'Amazon Basics AA 12-pack $11.49');
+    expect((await call('checkout', batteries)).text).toMatch(/in_review/);
+    expect(last()).toMatchObject({ status: 'in_review', reasons: ["waiting for you to approve the store's cart"] });
+    expect(merchant.transfers).toEqual([]);
+    await server.review(last()?.attemptId ?? '', true);
+    expect(merchant.transfers).toHaveLength(1);
   });
 
   it('accepts on matching merchant details even when the agent only saw the price in a search snippet', async () => {
@@ -210,7 +239,7 @@ describe('ScripToolServer, any purchase', () => {
     storePrice = null;
     read(shopUrl, 'Amazon Basics AA 12-pack $11.49');
     expect((await call('checkout', batteries)).text).toMatch(/in_review/);
-    expect(last()?.reasons[0]).toMatch(/^no merchant order details: shop.example publishes no machine-readable order data/);
+    expect(last()?.reasons[0]).toMatch(/^can't verify with the store: shop.example has no public cart or order data to read/);
     expect(kinds()).toContain('no_order_details');
     await server.review(last()?.attemptId ?? '', true);
     expect(last()?.status).toBe('approved');

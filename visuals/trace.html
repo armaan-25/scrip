@@ -161,9 +161,9 @@ AA size</textarea></label>
   </div>
   <div class="choices">
     <div class="choice"><span>Scrip</span><div class="seg" id="scrip">
-      <button data-v="blocker" aria-pressed="true">Blocker</button><button data-v="observer" aria-pressed="false">Observer</button></div></div>
+      <button data-v="blocker" aria-pressed="true">Blocker</button><button data-v="ask" aria-pressed="false">Ask me first</button><button data-v="observer" aria-pressed="false">Observer</button></div></div>
     <button class="primary" id="run">Run agent</button>
-    <span class="sub" id="realNote" style="color:var(--ink-2);font-size:13px;padding-bottom:8px">Real Claude agent on the live web. Payments go through Natural's sandbox API.</span>
+    <span class="sub" id="realNote" style="color:var(--ink-2);font-size:13px;padding-bottom:8px">Real Claude agent, live web. Scrip builds a real cart at the store to read its totals; nothing is ordered. Sandbox money on Natural stands in for the card.</span>
   </div>
   <div class="brief">
     <div><small id="toldK">The agent is told, word for word</small><span id="toldV"></span></div>
@@ -199,7 +199,7 @@ AA size</textarea></label>
     <div id="timeline"><p class="empty">Press Run agent. Each thing the agent does shows up here as it happens.</p></div>
   </div>
   <div class="col side">
-    <h2>Payments on Natural</h2>
+    <h2>Money moved on Natural</h2>
     <div id="natural"><p class="empty">No payments yet.</p></div>
     <p class="foot" id="railNote"></p>
     <h2 class="gap">Track record by agent version</h2>
@@ -243,7 +243,7 @@ AA size</textarea></label>
     const budget = Number($('taskBudget').value) || 0, m = musts();
     $('merchantName').textContent = 'Merchant';
     $('toldV').textContent = `"Customer request: ${$('taskText').value.trim()}" Budget: $${budget.toFixed(2)} total.${m.length ? ' Must-haves: ' + m.join('; ') + '.' : ''}`;
-    $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') + '. A separate checker (Claude Haiku) judges each one' : ''}. Then the merchant's own order details: their fingerprint must match the approved order. No merchant details means hold for review.`;
+    $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') + '. A separate checker (Claude Haiku) judges each one' : ''}. Then the store's own cart (built at the store): its fingerprint must match the agent's checkout. A store with no cart to read means hold for review.`;
   }
 
   /* Plain-English timeline. Tool results fold into their call; bookkeeping events are hidden. */
@@ -304,9 +304,9 @@ AA size</textarea></label>
         return [bad ? 'warn' : 'ok', `Checked the item: ${bits.join(', ')}${d.checks.length ? '. Must-haves: ' + d.checks.map(c => `${c.must}: ${c.verdict}`).join('; ') : ''}${d.checkerError ? ' (checker error: ' + d.checkerError + ')' : ''}`];
       }
       case 'merchant_order': {
-        if (d.reply.status === 'unavailable') return ['warn', 'Merchant sent no order details: ' + d.reply.reason];
+        if (d.reply.status === 'unavailable') return ['warn', 'No store cart to read: ' + d.reply.reason];
         const m = d.comparison && d.comparison.match;
-        return [m ? 'ok' : 'no', `Merchant's own order: ${d.reply.order.title}, ${usd(d.reply.order.totalCents)}. Fingerprint ${m ? 'matches' : "doesn't match"} the approved order${d.comparison && d.comparison.differences.length ? ' (' + d.comparison.differences.join('; ') + ')' : ''}`];
+        return [m ? 'ok' : 'no', `${d.reply.order.source === 'cart' ? "Built a cart at the store; the store's cart says" : "Store's catalog says"}: ${d.reply.order.title}${d.reply.order.variant ? ' (' + d.reply.order.variant + ')' : ''}, qty ${d.reply.order.quantity}, ${usd(d.reply.order.totalCents)}. Fingerprint ${m ? 'matches' : "doesn't match"} the agent's checkout${d.comparison && d.comparison.differences.length ? ' (' + d.comparison.differences.join('; ') + ')' : ''}`];
       }
       case 'payment_reviewed': return [d.decision === 'approved' ? 'ok' : 'no', d.decision === 'approved' ? 'You approved the payment' : 'You denied the payment. No money moved.'];
       case 'money_moved': return [d.status === 'COMPLETED' ? 'ok' : 'no', `Natural moved ${usd(d.amountCents)} from ${d.from} to ${d.to} (${d.status})`];
@@ -334,7 +334,7 @@ AA size</textarea></label>
     renderMonitors();
     renderActivity();
   }
-  const SHORT = { fingerprint_mismatch: "Merchant's order didn't match", no_order_details: 'Merchant sent no order details', snippet_only: 'Bought on a search snippet', page_failed: "Bought from a page it couldn't load", unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
+  const SHORT = { fingerprint_mismatch: "Store's cart didn't match", no_order_details: 'No store cart to verify', snippet_only: 'Bought on a search snippet', page_failed: "Bought from a page it couldn't load", unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
     source_unverified: "Couldn't verify its source", paid_not_approved: 'Paid for something not approved' };
   function renderMonitors() {
     const list = alerts[selected];
@@ -409,14 +409,15 @@ AA size</textarea></label>
   function fingerprintTable(p) {
     const m = p.merchantOrder;
     if (!m) return '';
-    if (m.reply.status === 'unavailable') return `<div class="muted" style="color:var(--warning)">Merchant sent no order details: ${esc(m.reply.reason)}.</div>`;
+    if (m.reply.status === 'unavailable') return `<div class="muted" style="color:var(--warning)">No store cart to read: ${esc(m.reply.reason)}. Nothing from the store confirms this purchase.</div>`;
     const a = m.approved || {}, b = m.reply.order, c = m.comparison || { match: false, approvedFingerprint: '', merchantFingerprint: '' };
     const row = (label, x, y) => `<tr class="${x !== y ? 'diff' : ''}"><td>${label}</td><td>${esc(x)}</td><td>${esc(y)}</td></tr>`;
-    return `<table class="fp"><tr><th></th><th>Approved order (A)</th><th>Merchant's order (B), from ${esc(b.source === 'shopify' ? "the store's Shopify data" : "the store's product markup")}</th></tr>
-      ${row('Store', a.store, b.store)}${row('Product', a.product, b.product)}${b.source === 'shopify' ? row('Option', a.variant || 'none', b.variant || 'none') : ''}${row('Quantity', String(a.quantity), String(b.quantity))}${row('Total', usd(a.totalCents), usd(b.totalCents))}
-      <tr><td>Merchant calls it</td><td></td><td>${esc(b.title)}</td></tr>
+    const bLabel = b.source === 'cart' ? "Store's own cart (B), built at the store" : b.source === 'shopify' ? "Store's catalog price (B), not a cart" : "Store's product markup (B), not a cart";
+    return `<table class="fp"><tr><th></th><th>Agent's checkout (A)</th><th>${bLabel}</th></tr>
+      ${row('Store', a.store, b.store)}${row('Product', a.product, b.product)}${b.source !== 'schema.org' ? row('Option', a.variant || 'none', b.variant || 'none') : ''}${row('Quantity', String(a.quantity), String(b.quantity))}${row('Total', usd(a.totalCents), usd(b.totalCents))}
+      <tr><td>Store calls it</td><td></td><td>${esc(b.title)}${b.sku ? ' · SKU ' + esc(b.sku) : ''}${b.cartToken ? ' · cart ' + esc(b.cartToken) + '…' : ''}</td></tr>
       <tr><td>Fingerprint</td><td class="mono">${esc(c.approvedFingerprint.slice(7, 23))}</td><td class="mono">${esc(c.merchantFingerprint.slice(7, 23))}</td></tr>
-      <tr><td></td><td colspan="2" style="color:${c.match ? 'var(--success)' : 'var(--error)'}">${c.match ? 'Fingerprints match: the merchant is charging for exactly the approved order.' : "Fingerprints don't match: the merchant's order differs from the approved one."}</td></tr></table>`;
+      <tr><td></td><td colspan="2" style="color:${c.match ? 'var(--success)' : 'var(--error)'}">${c.match ? `Fingerprints match. A card would be minted for ${esc(b.store)}, exactly ${usd(b.totalCents)}.` : "Fingerprints don't match: the store's cart differs from what the agent proposed. No card."}</td></tr></table>`;
   }
   async function review(attemptId, approve) {
     $('status').textContent = approve ? 'Paying' : 'Denying';
@@ -440,7 +441,7 @@ AA size</textarea></label>
   function renderNatural() {
     const moved = Object.entries(activity).flatMap(([sc, a]) => a.attempts.filter(p => p.transferId).map(p => ({ ...p, scenario: sc })));
     const transfers = moved.map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amountCents)}</span><span class="tag ${p.transferStatus === 'COMPLETED' ? 'ok' : 'no'}">${esc(p.transferStatus === 'COMPLETED' ? 'Completed' : p.transferStatus || '')}</span></div>
-      <div class="muted">Travel budget → ${p.merchant ? 'Merchant (simulated), for ' + esc(p.merchant) : 'Example Air (merchant)'}</div><div class="muted">${esc(p.label)}</div><div class="id" style="margin-top:8px">${esc(p.transferId)}</div></div>`).join('');
+      <div class="muted">Stands in for a card minted for ${esc(p.merchant || 'the merchant')}, exactly ${usd(p.amountCents)}</div><div class="muted">Travel budget → ${p.merchant ? 'Merchant (simulated)' : 'Example Air (merchant)'}</div><div class="muted">${esc(p.label)}</div><div class="id" style="margin-top:8px">${esc(p.transferId)}</div></div>`).join('');
     if (transfers) { $('natural').innerHTML = transfers; return; }
     $('natural').innerHTML = Object.values(payments).map(p => `<div class="card"><div class="row"><span class="big">${usd(p.amount)}</span><span class="tag ${p.tone}">${esc(p.status)}</span></div>
       <div class="muted">${esc(NAMES[p.scenario] || p.scenario)} paying Example Air</div>
@@ -477,8 +478,8 @@ AA size</textarea></label>
     if (s.type === 'payment_held') setStop('natural', 'Holding it', 'lit');
     if (s.type === 'hold_decided') { const ok = d.decision === 'approved'; setStop('scrip', ok ? 'Released the payment' : 'Denied the payment', ok ? 'ok' : 'no'); progress(2, ok ? 'ok' : 'no'); }
     if (s.type === 'merchant_order') {
-      if (d.reply.status === 'unavailable') setStop('merchant', 'Sent no order details', 'lit');
-      else setStop('merchant', d.comparison && d.comparison.match ? 'Order details match' : "Order details don't match", d.comparison && d.comparison.match ? 'ok' : 'no');
+      if (d.reply.status === 'unavailable') setStop('merchant', 'No cart to read', 'lit');
+      else setStop('merchant', d.comparison && d.comparison.match ? "Store's cart matches" : "Store's cart doesn't match", d.comparison && d.comparison.match ? 'ok' : 'no');
     }
     if (s.type === 'payment_attempted') {
       const dec = d.decision;
