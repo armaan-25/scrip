@@ -29,7 +29,7 @@ describe('stand-in Accept merchant', () => {
   it("charges for the option the agent named, and a different option breaks the fingerprint", async () => {
     const json = JSON.stringify({ product: { title: 'Tree Runner', variants: [{ id: 8, title: '8', price: '100.00' }, { id: 9, title: '9', price: '100.00' }] } });
     const fetchPage = async (u: string) => (u.endsWith('.json') ? { status: 200, text: json } : { status: 404, text: '' });
-    for (const named of ['9', 'Jet Black (Black Sole) / 9', "Men's size 9"]) {
+    for (const named of ['9', 'Jet Black (Black Sole) / 9', "Men's size 9", 'size 9, Jet Black']) {
       const nine = await merchantOrder('https://www.allbirds.com/products/tree', 1, fetchPage, named);
       expect(nine.status === 'priced' && [nine.order.variant, nine.order.optionMatched]).toEqual(['9', true]);
     }
@@ -38,5 +38,15 @@ describe('stand-in Accept merchant', () => {
     if (first.status !== 'priced') throw new Error('expected a priced order');
     expect(compareOrders(approved, first.order)).toMatchObject({ match: false, differences: ['option: approved 9, merchant charging for 8'] });
   });
-});
 
+  it('treats the same option written differently as the same option, and a different one as different', async () => {
+    const json = JSON.stringify({ product: { title: 'Dark Roast', variants: [{ id: 1, title: 'Whole Bean / 1 lb', price: '19.99' }, { id: 2, title: 'Ground / 1 lb', price: '19.99' }, { id: 3, title: 'Ground / 5 lb', price: '79.99' }] } });
+    const fetchPage = async (u: string) => (u.endsWith('.json') ? { status: 200, text: json } : { status: 404, text: '' });
+    for (const [named, store] of [['Ground, 1 lb (16 oz)', 'Ground / 1 lb'], ['ground / 5 lb', 'Ground / 5 lb'], ['Whole Bean, 1 lb', 'Whole Bean / 1 lb']] as const) {
+      const r = await merchantOrder('https://shop.example/products/dark', 1, fetchPage, named);
+      expect(r.status === 'priced' && [r.order.variant, r.order.optionMatched]).toEqual([store, true]);
+    }
+    const r = await merchantOrder('https://shop.example/products/dark', 1, fetchPage, 'Ground, 2 lb');
+    expect(r.status === 'priced' && r.order.optionMatched).toBe(false);
+  });
+});

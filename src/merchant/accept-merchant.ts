@@ -68,10 +68,13 @@ const cents = (v: unknown): number | null => {
 function fromShopify(json: unknown, variantId: string | null, wanted: string | undefined): { title: string; variant?: string; unitCents: number; optionMatched: boolean } | null {
   const product = (json as { product?: { title?: string; variants?: { id?: number; title?: string; price?: string; available?: boolean }[] } }).product;
   const variants = product?.variants ?? [];
-  // Every part of the store's option name must appear in what the agent named: store "9" matches "Jet Black / 9" and "size 9".
-  const parts = (v: string | undefined): string[] => norm(v).split(/\s*[/,]\s*/).map(p => p.replace(/\b(size|us|men'?s|women'?s)\b/g, '').trim()).filter(Boolean);
-  const wantedParts = parts(wanted);
-  const byName = wantedParts.length ? variants.find(v => { const vp = parts(v.title); return vp.length > 0 && vp.every(p => wantedParts.includes(p)); }) : undefined;
+  // Every part of the store's option name must appear in what the agent named: store "9" matches "Jet Black / 9" and
+  // "size 9"; store "Ground / 1 lb" matches "Ground, 1 lb (16 oz)". Parenthetical asides and words like "size" are ignored.
+  const parts = (v: string | undefined): string[] => norm(v).replace(/\([^)]*\)/g, ' ').split(/\s*[/,]\s*/)
+    .map(p => p.replace(/\b(size|us|men'?s|women'?s)\b/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const wantedText = ` ${parts(wanted).join(' | ')} `;
+  const contains = (part: string): boolean => new RegExp(`(^|[\\s|])${part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[\\s|]|$)`).test(wantedText);
+  const byName = wanted ? variants.find(v => { const vp = parts(v.title); return vp.length > 0 && vp.every(contains); }) : undefined;
   const chosen = (variantId && variants.find(v => String(v.id) === variantId)) || byName || variants.find(v => v.available !== false) || variants[0];
   const unit = cents(chosen?.price);
   if (!product?.title || !chosen || unit === null) return null;
