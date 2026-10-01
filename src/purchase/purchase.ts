@@ -4,11 +4,12 @@
  * item; Scrip decides:
  *
  *   rejected   over budget, or the checker says a must-have is not met
- *   in_review  the price never appeared in anything the agent read, the page
- *              it cites is one it never opened or saw, or the checker is unsure
+ *   in_review  the agent never saw the price on the page it is buying from
+ *              (only in search results, or the page showed no price), or the
+ *              checker is unsure
  *   accepted   otherwise
  *
- * Budget, "price seen", and "page seen" are exact checks in code. Must-haves
+ * Budget and "price on the cited page" are exact checks in code. Must-haves
  * are plain words, so a separate AI checker (judge.ts) answers each one; its
  * answers are recorded so the checker itself can be audited.
  */
@@ -18,7 +19,13 @@ export interface PurchaseTask { words: string; budgetCents: number; musts: strin
 export interface PurchaseItem { merchant: string; item: string; details: string; quantity: number; totalCents: number; url: string }
 export interface MustCheck { must: string; verdict: 'yes' | 'no' | 'unsure'; reason: string }
 export type PurchaseDecision = 'accepted' | 'rejected' | 'in_review';
-export interface PurchaseVerdict { decision: PurchaseDecision; blockerDecision: PurchaseDecision; reasons: string[]; priceSeen: boolean; pageSeen: boolean }
+export interface PurchaseVerdict {
+  decision: PurchaseDecision; blockerDecision: PurchaseDecision; reasons: string[];
+  /** Price appeared anywhere the agent read; page appeared in results or was opened; price appeared on the opened page itself. */
+  priceSeen: boolean; pageSeen: boolean; pageOpened: boolean; priceOnPage: boolean;
+}
+/** What the agent got back when it opened the page it cites (null if it never opened it successfully). */
+export type CitedPage = { text: string } | null;
 
 const usd = (cents: number): string => `$${(cents / 100).toFixed(2)}`;
 
@@ -30,21 +37,26 @@ export function pageSeen(url: string, openedUrls: string[], research: string): b
 }
 
 export function decidePurchase(
-  task: PurchaseTask, item: PurchaseItem, research: string, openedUrls: string[], checks: MustCheck[], mode: 'blocker' | 'observer',
+  task: PurchaseTask, item: PurchaseItem, research: string, cited: CitedPage, checks: MustCheck[], mode: 'blocker' | 'observer',
 ): PurchaseVerdict {
   const priceSeen = priceAppears(research, item.totalCents);
-  const seen = pageSeen(item.url, openedUrls, research);
+  const pageOpened = cited !== null;
+  const priceOnPage = cited !== null && priceAppears(cited.text, item.totalCents);
+  const seen = pageOpened || pageSeen(item.url, [], research);
+  const price = usd(item.totalCents);
   const rejected = [
     ...(item.totalCents > task.budgetCents ? [`${usd(item.totalCents)} is over the ${usd(task.budgetCents)} budget`] : []),
     ...checks.filter(c => c.verdict === 'no').map(c => `must-have not met: ${c.must} (${c.reason})`),
   ];
   const review = [
-    ...(priceSeen ? [] : [`${usd(item.totalCents)} never appeared in anything the agent read`]),
-    ...(seen ? [] : ['the agent never opened or saw the page it cites']),
+    ...(!priceSeen ? [`${price} never appeared in anything the agent read`]
+      : priceOnPage ? []
+      : pageOpened ? [`the page it is buying from does not show ${price}; it saw that price only in search results`]
+      : [`it never opened the page it is buying from; ${price} came from search results only`]),
     ...checks.filter(c => c.verdict === 'unsure').map(c => `checker unsure: ${c.must} (${c.reason})`),
   ];
   const blockerDecision: PurchaseDecision = rejected.length ? 'rejected' : review.length ? 'in_review' : 'accepted';
-  return { decision: mode === 'blocker' ? blockerDecision : 'accepted', blockerDecision, reasons: rejected.length ? rejected : review, priceSeen, pageSeen: seen };
+  return { decision: mode === 'blocker' ? blockerDecision : 'accepted', blockerDecision, reasons: rejected.length ? rejected : review, priceSeen, pageSeen: seen, pageOpened, priceOnPage };
 }
 
 /** Parse the agent's checkout arguments at the boundary, or say what is wrong. */

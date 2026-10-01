@@ -237,7 +237,7 @@ AA size</textarea></label>
     const budget = Number($('taskBudget').value) || 0, m = musts();
     $('merchantName').textContent = 'Merchant';
     $('toldV').textContent = `"Customer request: ${$('taskText').value.trim()}" Budget: $${budget.toFixed(2)} total.${m.length ? ' Must-haves: ' + m.join('; ') + '.' : ''}`;
-    $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') + '. A separate checker (Claude Haiku) judges each one' : ''}. Plus: the price and page must appear in what the agent actually read.`;
+    $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') + '. A separate checker (Claude Haiku) judges each one' : ''}. Plus: the agent must have seen the price on the page it is buying from, not just in search results.`;
   }
 
   /* Plain-English timeline. Tool results fold into their call; bookkeeping events are hidden. */
@@ -289,8 +289,12 @@ AA size</textarea></label>
         return [tone, `Checkout ${label.toLowerCase()}: ${d.label}, ${usd(d.amountCents)}${d.reasons.length ? ' (' + d.reasons.join('; ') + ')' : ''}${d.mode === 'observer' && d.blockerDecision !== 'accepted' ? ' (observer mode; Blocker would have ' + (d.blockerDecision === 'in_review' ? 'held it for review' : 'rejected it') + ')' : ''}`];
       }
       case 'purchase_checked': {
-        const bits = [d.priceSeen ? 'price seen in its research' : 'price NOT in anything it read', d.pageSeen ? 'page seen' : 'page never opened'];
-        const bad = !d.priceSeen || !d.pageSeen || d.checks.some(c => c.verdict !== 'yes');
+        const where = !d.priceSeen ? 'the price never appeared in anything it read'
+          : d.priceOnPage ? 'the price is on the page it is buying from'
+          : d.pageOpened ? 'the page it is buying from does not show the price (only search results did)'
+          : 'it never opened the page it is buying from (the price came from search results)';
+        const bits = [where];
+        const bad = !d.priceSeen || d.priceOnPage === false || d.checks.some(c => c.verdict !== 'yes');
         return [bad ? 'warn' : 'ok', `Checked the item: ${bits.join(', ')}${d.checks.length ? '. Must-haves: ' + d.checks.map(c => `${c.must}: ${c.verdict}`).join('; ') : ''}${d.checkerError ? ' (checker error: ' + d.checkerError + ')' : ''}`];
       }
       case 'payment_reviewed': return [d.decision === 'approved' ? 'ok' : 'no', d.decision === 'approved' ? 'You approved the payment' : 'You denied the payment. No money moved.'];
@@ -319,7 +323,7 @@ AA size</textarea></label>
     renderMonitors();
     renderActivity();
   }
-  const SHORT = { page_failed: "Bought from a page it couldn't load", unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
+  const SHORT = { snippet_only: 'Bought on a search snippet', page_failed: "Bought from a page it couldn't load", unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
     source_unverified: "Couldn't verify its source", paid_not_approved: 'Paid for something not approved' };
   function renderMonitors() {
     const list = alerts[selected];

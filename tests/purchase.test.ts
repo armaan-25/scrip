@@ -8,21 +8,29 @@ const yes = [{ must: 'Duracell or Amazon Basics', verdict: 'yes' as const, reaso
 const readIt = 'Amazon Basics AA 12 pack $11.49 amazon.com/dp/B00MNV8E0C';
 
 describe('decidePurchase', () => {
-  it('accepts when in budget, the price and page were seen, and every must-have is met', () => {
-    expect(decidePurchase(task, item, readIt, [], yes, 'blocker')).toMatchObject({ decision: 'accepted', priceSeen: true, pageSeen: true, reasons: [] });
+  const onPage = { text: 'Amazon Basics AA 12 pack $11.49' };
+  it('accepts only when in budget, every must-have is met, and the price is on the page it is buying from', () => {
+    expect(decidePurchase(task, item, readIt, onPage, yes, 'blocker')).toMatchObject({ decision: 'accepted', priceSeen: true, priceOnPage: true, reasons: [] });
   });
 
-  it('rejects over budget or a failed must-have; reviews an unseen price, an unseen page, or an unsure checker', () => {
-    expect(decidePurchase(task, { ...item, totalCents: 2500 }, '$25.00 amazon.com/dp/B00MNV8E0C', [], yes, 'blocker').reasons).toEqual(['$25.00 is over the $20.00 budget']);
-    expect(decidePurchase(task, item, readIt, [], [yes[0], { must: '12 batteries', verdict: 'no', reason: 'it is an 8-pack' }], 'blocker').decision).toBe('rejected');
-    expect(decidePurchase(task, item, 'Amazon Basics AA from $9.99 amazon.com/dp/B00MNV8E0C', [], yes, 'blocker'))
-      .toMatchObject({ decision: 'in_review', reasons: ['$11.49 never appeared in anything the agent read'] });
-    expect(decidePurchase(task, item, '$11.49', [], yes, 'blocker').reasons).toEqual(['the agent never opened or saw the page it cites']);
-    expect(decidePurchase(task, item, readIt, [], [yes[0], { must: '12 batteries', verdict: 'unsure', reason: 'count not stated' }], 'blocker').decision).toBe('in_review');
+  it("holds the real battery run: the price was only in search results; the product page showed no price", () => {
+    const productPage = { text: 'I cannot find the current price, pack size, or battery type information in the provided HTML content.' };
+    expect(decidePurchase(task, item, readIt, productPage, yes, 'blocker')).toMatchObject({
+      decision: 'in_review', priceSeen: true, pageOpened: true, priceOnPage: false,
+      reasons: ['the page it is buying from does not show $11.49; it saw that price only in search results'],
+    });
+    expect(decidePurchase(task, item, readIt, null, yes, 'blocker').reasons).toEqual(['it never opened the page it is buying from; $11.49 came from search results only']);
+  });
+
+  it('rejects over budget or a failed must-have; reviews a price never seen or an unsure checker', () => {
+    expect(decidePurchase(task, { ...item, totalCents: 2500 }, '$25.00', { text: '$25.00' }, yes, 'blocker').reasons).toEqual(['$25.00 is over the $20.00 budget']);
+    expect(decidePurchase(task, item, readIt, onPage, [yes[0], { must: '12 batteries', verdict: 'no', reason: 'it is an 8-pack' }], 'blocker').decision).toBe('rejected');
+    expect(decidePurchase(task, item, 'from $9.99', { text: 'from $9.99' }, yes, 'blocker').reasons).toEqual(['$11.49 never appeared in anything the agent read']);
+    expect(decidePurchase(task, item, readIt, onPage, [yes[0], { must: '12 batteries', verdict: 'unsure', reason: 'count not stated' }], 'blocker').decision).toBe('in_review');
   });
 
   it('observer mode accepts but keeps what blocker would have done', () => {
-    expect(decidePurchase(task, { ...item, totalCents: 2500 }, '', [], yes, 'observer')).toMatchObject({ decision: 'accepted', blockerDecision: 'rejected' });
+    expect(decidePurchase(task, { ...item, totalCents: 2500 }, '', null, yes, 'observer')).toMatchObject({ decision: 'accepted', blockerDecision: 'rejected' });
   });
 
   it('treats a page as seen if it was opened (ignoring query strings) or appeared in results', () => {

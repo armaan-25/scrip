@@ -288,16 +288,19 @@ export class ScripToolServer {
     const events = this.service.events(ctx.traceId);
     const research = events.flatMap(e => (e.type === 'agent_tool_result' && ['WebSearch', 'WebFetch'].includes(e.data.tool) ? [e.data.output] : [])).join('\n');
     const toolInputs = new Map(events.flatMap(e => (e.type === 'agent_tool_call' ? [[e.data.toolUseId, e.data.input] as const] : [])));
-    const opened = events.flatMap(e => {
-      if (e.type !== 'agent_tool_result' || e.data.tool !== 'WebFetch' || e.data.isError) return [];
+    // What the agent got back from the page it is buying from (successful opens of that same page only).
+    const key = (u: string): string => { try { const x = new URL(u); return (x.hostname.replace(/^www\./, '') + x.pathname).replace(/\/$/, ''); } catch { return u; } };
+    const citedTexts = events.flatMap(e => {
+      if (e.type !== 'agent_tool_result' || e.data.tool !== 'WebFetch' || e.data.isError || /HTTP [45]\d\d/.test(e.data.output.slice(0, 200))) return [];
       const input = toolInputs.get(e.data.toolUseId);
       const url = input && typeof input === 'object' ? (input as Json).url : undefined;
-      return typeof url === 'string' ? [url] : [];
+      return typeof url === 'string' && key(url) === key(item.url) ? [e.data.output] : [];
     });
+    const cited = citedTexts.length ? { text: citedTexts.join('\n') } : null;
     const judged = await judgeMusts(item, ctx.task.musts, this.judge);
     const mode = ctx.scripMode ?? 'blocker';
-    const verdict = decidePurchase(ctx.task, item, research, opened, judged.checks, mode);
-    this.service.recordPurchaseChecked(ctx.traceId, { attemptId, item, priceSeen: verdict.priceSeen, pageSeen: verdict.pageSeen, checks: judged.checks, checkerModel: judged.model, ...(judged.error ? { checkerError: judged.error } : {}) });
+    const verdict = decidePurchase(ctx.task, item, research, cited, judged.checks, mode);
+    this.service.recordPurchaseChecked(ctx.traceId, { attemptId, item, priceSeen: verdict.priceSeen, pageSeen: verdict.pageSeen, pageOpened: verdict.pageOpened, priceOnPage: verdict.priceOnPage, checks: judged.checks, checkerModel: judged.model, ...(judged.error ? { checkerError: judged.error } : {}) });
     this.service.recordAttempt(ctx.traceId, { attemptId, label: `${item.item} (${item.merchant})`, amountCents: item.totalCents, item, sourceUrl: item.url, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
     if (verdict.decision === 'rejected') {
       return ok(ctx.refusalFeedback === 'ask_customer'

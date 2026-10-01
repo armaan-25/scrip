@@ -19,7 +19,7 @@ export type TraceEvent =
   | { type: 'source_checked'; data: { offerId: string; url: string; status: 'backed' | 'not_backed' | 'unreadable'; priceShown: boolean; flightsShown: string[]; flightsMissing: string[]; detail: string } }
   | { type: 'task_confirmed'; data: { budgetCents: number; musts: string[] } }
   | { type: 'purchase_understanding'; data: { budgetCents: number; musts: string[] } }
-  | { type: 'purchase_checked'; data: { attemptId: string; item: PurchaseItem; priceSeen: boolean; pageSeen: boolean; checks: MustCheck[]; checkerModel: string; checkerError?: string } }
+  | { type: 'purchase_checked'; data: { attemptId: string; item: PurchaseItem; priceSeen: boolean; pageSeen: boolean; pageOpened?: boolean; priceOnPage?: boolean; checks: MustCheck[]; checkerModel: string; checkerError?: string } }
   | { type: 'payment_attempted'; data: { attemptId: string; label: string; amountCents: number; offer?: FlightOffer; item?: PurchaseItem; sourceUrl: string; mode: 'blocker' | 'observer'; decision: 'accepted' | 'rejected' | 'in_review'; blockerDecision: 'accepted' | 'rejected' | 'in_review'; reasons: string[] } }
   | { type: 'payment_reviewed'; data: { attemptId: string; decision: 'approved' | 'denied'; by: string } }
   | { type: 'money_moved'; data: { attemptId: string; transferId: string; amountCents: number; from: string; to: string; status: string } }
