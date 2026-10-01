@@ -99,7 +99,15 @@ agent never saw the price on the page it is buying from (only in search results,
 or the page showed no price) or whose must-haves the checker can't confirm, and
 accepts the rest. Must-haves are
 plain words, so a separate Claude Haiku call judges each one (`src/purchase/judge.ts`)
-and its answers are recorded next to the payment. Accepted and approved checkouts
+and its answers are recorded next to the payment.
+
+**Order-details fingerprint.** A stand-in Natural Accept merchant (`src/merchant/accept-merchant.ts`),
+separate from Scrip, builds the order it would charge for from the store's own
+structured data (Shopify product JSON or schema.org Product markup), never from the
+agent. Scrip fingerprints the approved order (store, product, option, quantity, total)
+and the merchant's order over the same fields: a match pays, any difference is
+rejected with the differing fields named, and a store that publishes no order data
+(Amazon, Best Buy, ...) is held for review because nothing independent confirms it. Accepted and approved checkouts
 move sandbox money to a "Merchant (simulated)" Natural wallet; no real store is paid.
 
 ### Real AI agents, per-version track record

@@ -4,6 +4,7 @@
  * payment it attempted with its current status, and the money that actually
  * moved on Natural. Pure: events in, summary out.
  */
+import type { CanonicalOrder, MerchantReply, OrderComparison } from '../merchant/accept-merchant.js';
 import type { MustCheck } from '../purchase/purchase.js';
 import type { RecordedEvent } from './events.js';
 
@@ -11,8 +12,9 @@ export interface SiteVisit { kind: 'search' | 'page'; target: string; status: 'l
 export type AttemptStatus = 'accepted' | 'rejected' | 'in_review' | 'approved' | 'denied' | 'failed';
 export interface PaymentAttempt {
   attemptId: string; label: string; merchant?: string; details?: string; amountCents: number; sourceUrl: string;
-  /** Any-purchase runs: the must-have checker's answers. */
+  /** Any-purchase runs: the must-have checker's answers, and the merchant's order compared with the approved one. */
   checks?: MustCheck[];
+  merchantOrder?: { approved: CanonicalOrder | null; reply: MerchantReply; comparison?: OrderComparison };
   mode: 'blocker' | 'observer'; blockerDecision: 'accepted' | 'rejected' | 'in_review';
   status: AttemptStatus; reasons: string[]; transferId?: string; transferStatus?: string; at: string;
 }
@@ -34,6 +36,7 @@ export function runActivity(events: RecordedEvent[]): RunActivity {
   const attempts = new Map<string, PaymentAttempt>();
   let moneyMovedCents = 0;
   const pendingChecks = new Map<string, MustCheck[]>();
+  const pendingOrders = new Map<string, NonNullable<PaymentAttempt['merchantOrder']>>();
   for (const e of events) {
     if (e.type === 'agent_tool_call') calls.set(e.data.toolUseId, { tool: e.data.tool, input: obj(e.data.input), at: e.at });
     if (e.type === 'agent_tool_result' && (e.data.tool === 'WebSearch' || e.data.tool === 'WebFetch')) {
@@ -52,6 +55,7 @@ export function runActivity(events: RecordedEvent[]): RunActivity {
       });
     }
     if (e.type === 'purchase_checked') pendingChecks.set(e.data.attemptId, e.data.checks);
+    if (e.type === 'merchant_order') pendingOrders.set(e.data.attemptId, { approved: e.data.approved, reply: e.data.reply, ...(e.data.comparison ? { comparison: e.data.comparison } : {}) });
     if (e.type === 'payment_reviewed') {
       const a = attempts.get(e.data.attemptId);
       if (a) a.status = e.data.decision;
@@ -66,7 +70,10 @@ export function runActivity(events: RecordedEvent[]): RunActivity {
       if (e.data.status === 'COMPLETED') moneyMovedCents += e.data.amountCents;
     }
   }
-  for (const a of attempts.values()) { const c = pendingChecks.get(a.attemptId); if (c) a.checks = c; }
+  for (const a of attempts.values()) {
+    const c = pendingChecks.get(a.attemptId); if (c) a.checks = c;
+    const o = pendingOrders.get(a.attemptId); if (o) a.merchantOrder = o;
+  }
   return { traceId, sites, attempts: [...attempts.values()], moneyMovedCents };
 }
 

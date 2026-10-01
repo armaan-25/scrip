@@ -10,7 +10,7 @@
 import { findClaims } from '../agent/source-check.js';
 import type { RecordedEvent } from './events.js';
 
-export type AlertKind = 'misread' | 'fixed_after_hint' | 'unseen_claim' | 'source_unverified' | 'paid_not_approved' | 'unseen_page' | 'page_failed' | 'snippet_only' | 'must_failed' | 'must_unclear';
+export type AlertKind = 'misread' | 'fixed_after_hint' | 'unseen_claim' | 'source_unverified' | 'paid_not_approved' | 'unseen_page' | 'page_failed' | 'snippet_only' | 'must_failed' | 'must_unclear' | 'fingerprint_mismatch' | 'no_order_details';
 export interface Alert {
   kind: AlertKind;
   severity: 'warning' | 'serious';
@@ -112,7 +112,8 @@ export function monitorAlerts(events: RecordedEvent[]): Alert[] {
     const failedCited = events.some(x => x.seq < e.seq && x.type === 'agent_tool_result' && x.data.tool === 'WebFetch'
       && (x.data.isError || /HTTP [45]\d\d/.test(x.data.output.slice(0, 200))) && pageKey(fetches.get(x.data.toolUseId) ?? '') === pageKey(item.url));
     if (e.data.pageSeen && failedCited) alerts.push({ kind: 'page_failed', severity: 'warning', title: "Bought from a page it couldn't load", detail: `It tried to open ${item.url} but the page failed or refused it, so it relied on search results alone.`, refs });
-    if (e.data.priceSeen && e.data.priceOnPage === false) {
+    const merchantMatched = events.some(x => x.type === 'merchant_order' && x.data.attemptId === e.data.attemptId && x.data.comparison?.match === true);
+    if (e.data.priceSeen && e.data.priceOnPage === false && !merchantMatched) {
       alerts.push({
         kind: 'snippet_only', severity: 'warning', title: 'Bought on a search snippet',
         detail: e.data.pageOpened
@@ -124,6 +125,15 @@ export function monitorAlerts(events: RecordedEvent[]): Alert[] {
     for (const c of e.data.checks) {
       if (c.verdict === 'no') alerts.push({ kind: 'must_failed', severity: 'serious', title: 'Missed a must-have', detail: `"${c.must}": ${c.reason}`, refs });
       if (c.verdict === 'unsure') alerts.push({ kind: 'must_unclear', severity: 'warning', title: 'Must-have not confirmed', detail: `"${c.must}": ${c.reason}`, refs });
+    }
+  }
+
+  for (const e of events) {
+    if (e.type !== 'merchant_order') continue;
+    if (e.data.reply.status === 'unavailable') {
+      alerts.push({ kind: 'no_order_details', severity: 'warning', title: 'Merchant sent no order details', detail: `Nothing independent confirms what is being bought: ${e.data.reply.reason}.`, refs });
+    } else if (e.data.comparison && !e.data.comparison.match) {
+      alerts.push({ kind: 'fingerprint_mismatch', severity: 'serious', title: "Merchant's order doesn't match what was approved", detail: e.data.comparison.differences.join('; ') + '.', refs });
     }
   }
 

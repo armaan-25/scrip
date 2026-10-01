@@ -1,5 +1,6 @@
 import type { RequirementDifference, Violation } from '../flights/rules.js';
 import type { FlightOffer, FlightRequirements } from '../flights/types.js';
+import type { CanonicalOrder, MerchantReply, OrderComparison } from '../merchant/accept-merchant.js';
 import type { MustCheck, PurchaseItem } from '../purchase/purchase.js';
 
 /** Everything that can happen to one purchase, in the order it happens. */
@@ -20,6 +21,7 @@ export type TraceEvent =
   | { type: 'task_confirmed'; data: { budgetCents: number; musts: string[] } }
   | { type: 'purchase_understanding'; data: { budgetCents: number; musts: string[] } }
   | { type: 'purchase_checked'; data: { attemptId: string; item: PurchaseItem; priceSeen: boolean; pageSeen: boolean; pageOpened?: boolean; priceOnPage?: boolean; checks: MustCheck[]; checkerModel: string; checkerError?: string } }
+  | { type: 'merchant_order'; data: { attemptId: string; approved: CanonicalOrder | null; reply: MerchantReply; comparison?: OrderComparison } }
   | { type: 'payment_attempted'; data: { attemptId: string; label: string; amountCents: number; offer?: FlightOffer; item?: PurchaseItem; sourceUrl: string; mode: 'blocker' | 'observer'; decision: 'accepted' | 'rejected' | 'in_review'; blockerDecision: 'accepted' | 'rejected' | 'in_review'; reasons: string[] } }
   | { type: 'payment_reviewed'; data: { attemptId: string; decision: 'approved' | 'denied'; by: string } }
   | { type: 'money_moved'; data: { attemptId: string; transferId: string; amountCents: number; from: string; to: string; status: string } }

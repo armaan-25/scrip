@@ -26,7 +26,8 @@ import { catalog, describeOffer, findOffer } from './catalog.js';
 import type { FlightSource } from './profiles.js';
 import type { MerchantRail } from '../rails/merchant-rail.js';
 import { decideCheckout, type ScripMode } from './checkout.js';
-import { decidePurchase, parseItem, type PurchaseItem, type PurchaseTask } from '../purchase/purchase.js';
+import { decidePurchase, decideWithMerchant, parseItem, type PurchaseItem, type PurchaseTask } from '../purchase/purchase.js';
+import { canonicalProduct, compareOrders, merchantOrder } from '../merchant/accept-merchant.js';
 import { judgeMusts, type JudgeRunner, claudeJudge } from '../purchase/judge.js';
 import { checkSource, type FetchPage, fetchPublicPage } from './source-check.js';
 
@@ -101,6 +102,7 @@ const TASK_CHECKOUT = {
       merchant: { type: 'string', description: 'Store or seller' },
       item: { type: 'string', description: 'Product name as the page shows it' },
       details: { type: 'string', description: 'Size, color, model, delivery date, and anything else that matters, as the page shows it' },
+      option: { type: 'string', description: 'Size, color, or other option exactly as the store names it (e.g. "9" or "9 / Black"), if the item has options' },
       quantity: { type: 'integer' },
       totalUsd: { type: 'number', description: 'Total price in USD, as shown on the page' },
       url: { type: 'string', description: 'The page where you found this item and price' },
@@ -299,7 +301,17 @@ export class ScripToolServer {
     const cited = citedTexts.length ? { text: citedTexts.join('\n') } : null;
     const judged = await judgeMusts(item, ctx.task.musts, this.judge);
     const mode = ctx.scripMode ?? 'blocker';
-    const verdict = decidePurchase(ctx.task, item, research, cited, judged.checks, mode);
+    const evidence = decidePurchase(ctx.task, item, research, cited, judged.checks, mode);
+    // The stand-in Accept merchant prices the order from the store's own data; its fingerprint is compared with the approved order's.
+    const where = canonicalProduct(item.url);
+    const reply = await merchantOrder(item.url, item.quantity, this.fetchPage, item.option);
+    // Options are compared only when the store has them (Shopify variants); otherwise both sides leave it empty.
+    // When the store recognizes the agent's option ("Jet Black / 9" = store's "9"), the approved order uses the store's name for it.
+    const option = reply.status === 'priced' && reply.order.source === 'shopify' ? (reply.order.optionMatched ? reply.order.variant : item.option) : undefined;
+    const approved = where ? { ...where, quantity: item.quantity, totalCents: item.totalCents, ...(option ? { variant: option } : {}) } : null;
+    const comparison = reply.status === 'priced' && approved ? compareOrders(approved, reply.order) : undefined;
+    this.service.recordMerchantOrder(ctx.traceId, { attemptId, approved, reply, ...(comparison ? { comparison } : {}) });
+    const verdict = { ...evidence, ...decideWithMerchant(evidence, reply.status === 'priced' ? { status: 'priced', match: comparison?.match ?? false, differences: comparison?.differences ?? [] } : reply, mode) };
     this.service.recordPurchaseChecked(ctx.traceId, { attemptId, item, priceSeen: verdict.priceSeen, pageSeen: verdict.pageSeen, pageOpened: verdict.pageOpened, priceOnPage: verdict.priceOnPage, checks: judged.checks, checkerModel: judged.model, ...(judged.error ? { checkerError: judged.error } : {}) });
     this.service.recordAttempt(ctx.traceId, { attemptId, label: `${item.item} (${item.merchant})`, amountCents: item.totalCents, item, sourceUrl: item.url, mode, decision: verdict.decision, blockerDecision: verdict.blockerDecision, reasons: verdict.reasons });
     if (verdict.decision === 'rejected') {

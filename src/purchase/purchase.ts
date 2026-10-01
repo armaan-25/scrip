@@ -16,7 +16,7 @@
 import { priceAppears } from '../agent/source-check.js';
 
 export interface PurchaseTask { words: string; budgetCents: number; musts: string[] }
-export interface PurchaseItem { merchant: string; item: string; details: string; quantity: number; totalCents: number; url: string }
+export interface PurchaseItem { merchant: string; item: string; details: string; quantity: number; totalCents: number; url: string; /** Size, color, or other option as the store names it. */ option?: string }
 export interface MustCheck { must: string; verdict: 'yes' | 'no' | 'unsure'; reason: string }
 export type PurchaseDecision = 'accepted' | 'rejected' | 'in_review';
 export interface PurchaseVerdict {
@@ -70,5 +70,33 @@ export function parseItem(a: Record<string, unknown>): PurchaseItem | string {
   if (!Number.isFinite(totalUsd) || totalUsd <= 0) return 'totalUsd must be the positive total price in USD';
   if (!Number.isInteger(quantity) || quantity < 1) return 'quantity must be a whole number, 1 or more';
   if (!/^https?:\/\//.test(url)) return 'url must be the http(s) page where you found this item and price';
-  return { merchant: merchant.slice(0, 60), item: item.slice(0, 160), details: String(a.details ?? '').slice(0, 600), quantity, totalCents: Math.round(totalUsd * 100), url };
+  const option = typeof a.option === 'string' && a.option.trim() ? a.option.trim().slice(0, 80) : undefined;
+  return { merchant: merchant.slice(0, 60), item: item.slice(0, 160), details: String(a.details ?? '').slice(0, 600), quantity, totalCents: Math.round(totalUsd * 100), url, ...(option ? { option } : {}) };
+}
+
+/**
+ * Final decision once the merchant has answered. Merchant order details are
+ * the trusted source: when the merchant priced the order, its fingerprint
+ * must match the approved order (any difference is rejected), and the
+ * agent-side evidence checks no longer matter. When the merchant sent no
+ * order details, nothing independent confirms the purchase, so Blocker holds
+ * it for review with the agent-side reasons attached.
+ */
+export function decideWithMerchant(
+  verdict: PurchaseVerdict, merchant: { status: 'priced'; match: boolean; differences: string[] } | { status: 'unavailable'; reason: string }, mode: 'blocker' | 'observer',
+): Pick<PurchaseVerdict, 'decision' | 'blockerDecision' | 'reasons'> {
+  let blockerDecision: PurchaseDecision;
+  let reasons: string[];
+  if (verdict.blockerDecision === 'rejected') {
+    blockerDecision = 'rejected'; reasons = verdict.reasons;
+  } else if (merchant.status === 'priced') {
+    const unsure = verdict.reasons.filter(r => r.startsWith('checker unsure'));
+    if (!merchant.match) { blockerDecision = 'rejected'; reasons = ['merchant order details do not match the approved order', ...merchant.differences]; }
+    else if (unsure.length) { blockerDecision = 'in_review'; reasons = unsure; }
+    else { blockerDecision = 'accepted'; reasons = []; }
+  } else {
+    blockerDecision = 'in_review';
+    reasons = [`no merchant order details: ${merchant.reason}`, ...verdict.reasons];
+  }
+  return { decision: mode === 'blocker' ? blockerDecision : 'accepted', blockerDecision, reasons };
 }

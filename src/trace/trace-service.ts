@@ -87,6 +87,7 @@ export class FlightTraceService {
   confirmTask(traceId: string, data: Data<'task_confirmed'>): void { this.append(traceId, { type: 'task_confirmed', data }); }
   recordPurchaseUnderstanding(traceId: string, data: Data<'purchase_understanding'>): void { this.append(traceId, { type: 'purchase_understanding', data }); }
   recordPurchaseChecked(traceId: string, data: Data<'purchase_checked'>): void { this.append(traceId, { type: 'purchase_checked', data }); }
+  recordMerchantOrder(traceId: string, data: Data<'merchant_order'>): void { this.append(traceId, { type: 'merchant_order', data }); }
   requirementsFor(traceId: string): FlightRequirements { return this.confirmed(traceId).requirements; }
   recordPaymentSubmitted(traceId: string, data: Data<'payment_submitted'>): void { this.append(traceId, { type: 'payment_submitted', data }); }
   recordHold(traceId: string, data: Data<'payment_held'>): void { this.append(traceId, { type: 'payment_held', data }); }
