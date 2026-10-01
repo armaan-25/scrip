@@ -53,3 +53,15 @@ describe('monitors', () => {
     expect(alert).toMatchObject({ kind: 'paid_not_approved', severity: 'serious', refs: { paymentId: 'pay_1', approvalId: 'apr_1' } });
   });
 });
+
+describe('monitors, any purchase', () => {
+  it("flags buying from a page the agent tried to open but couldn't load", () => {
+    const item = { merchant: 'Best Buy', item: 'USB-C cable', details: '', quantity: 1, totalCents: 999, url: 'https://www.bestbuy.com/site/cable/6588143.p?skuId=6588143' };
+    const alerts = monitorAlerts([
+      ev({ type: 'agent_tool_call', data: { toolUseId: 'f1', tool: 'WebFetch', input: { url: 'https://www.bestbuy.com/site/cable/6588143.p' } } }),
+      ev({ type: 'agent_tool_result', data: { toolUseId: 'f1', tool: 'WebFetch', output: 'fetch failed', isError: true } }),
+      ev({ type: 'purchase_checked', data: { attemptId: 'a', item, priceSeen: true, pageSeen: true, checks: [], checkerModel: 'haiku' } }),
+    ]);
+    expect(alerts.map(a => a.kind)).toEqual(['page_failed']);
+  });
+});

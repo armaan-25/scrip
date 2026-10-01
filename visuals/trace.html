@@ -146,32 +146,22 @@
 <div class="bar"><div><strong>Scrip</strong><span class="sub">Watch an AI agent buy something with money</span></div><span id="status" role="status">Ready</span></div>
 
 <section class="setup">
-  <div class="choices">
-    <div class="choice"><span>Task</span><div class="seg" id="flights">
-      <button data-v="task" aria-pressed="true">Any purchase</button><button data-v="web" aria-pressed="false">Flight, real web</button><button data-v="catalog" aria-pressed="false">Flight, demo catalog</button></div></div>
-    <div class="choice" id="modelWrap"><span>Agent</span><div class="seg" id="model"></div></div>
-    <div class="choice"><span>Agent</span><div class="seg" id="profile"></div></div>
-    <div class="choice"><span>Request</span><div class="seg" id="req">
-      <button data-v="precise" aria-pressed="true">Precise</button><button data-v="vague" aria-pressed="false">Vague</button></div></div>
-    <div class="choice"><span>Payments</span><div class="seg" id="mode">
-      <button data-v="offline" aria-pressed="true">Simulated</button><button data-v="sandbox" aria-pressed="false">Natural sandbox</button></div></div>
-    <div class="choice"><span>Scrip</span><div class="seg" id="scrip">
-      <button data-v="blocker" aria-pressed="true">Blocker</button><button data-v="observer" aria-pressed="false">Observer</button></div></div>
-    <div class="choice"><span>When Scrip refuses</span><div class="seg" id="feedback">
-      <button data-v="explain" aria-pressed="true">Explain why</button><button data-v="ask_customer" aria-pressed="false">Ask the customer</button></div></div>
-    <button class="primary" id="run">Run agent</button>
-    <button class="link" id="scripted">Or run the three scripted agents</button>
-  </div>
   <div class="taskbox" id="taskbox">
-    <label>What should the agent buy?<textarea id="taskText">Buy a 12-pack of AA batteries, Duracell or Amazon Basics.</textarea></label>
+    <label>What should the agent buy?<textarea id="taskText" placeholder="Anything. For example: a 12-pack of AA batteries, Duracell or Amazon Basics.">Buy a 12-pack of AA batteries, Duracell or Amazon Basics.</textarea></label>
     <label>Budget (USD)<input id="taskBudget" type="number" min="1" step="0.01" value="20"></label>
-    <label>Must-haves, one per line<textarea id="taskMusts">Duracell or Amazon Basics
+    <label>Must-haves, one per line (optional)<textarea id="taskMusts">Duracell or Amazon Basics
 12 batteries
 AA size</textarea></label>
   </div>
+  <div class="choices">
+    <div class="choice"><span>Scrip</span><div class="seg" id="scrip">
+      <button data-v="blocker" aria-pressed="true">Blocker</button><button data-v="observer" aria-pressed="false">Observer</button></div></div>
+    <button class="primary" id="run">Run agent</button>
+    <span class="sub" id="realNote" style="color:var(--ink-2);font-size:13px;padding-bottom:8px">Real Claude agent on the live web. Payments go through Natural's sandbox API.</span>
+  </div>
   <div class="brief">
     <div><small id="toldK">The agent is told, word for word</small><span id="toldV"></span></div>
-    <div><small id="confirmedK">Scrip checks against what the person confirmed (the agent never sees this)</small><span id="confirmedV"></span></div>
+    <div><small id="confirmedK">Scrip checks every checkout against</small><span id="confirmedV"></span></div>
   </div>
 </section>
 
@@ -195,6 +185,7 @@ AA size</textarea></label>
     <div class="tabs" id="tabs" hidden></div>
     <h2 id="monitorsTitle">Monitors</h2>
     <div id="monitors"><p class="clear" style="color:var(--ink-2)">Alerts about the agent's decisions show up here during a run.</p></div>
+    <div id="reportWrap" hidden><h2>What the agent reported</h2><p class="rows" id="report" style="white-space:pre-wrap;font-size:13px;line-height:19px"></p></div>
     <div id="paySection" hidden><h2>Payments attempted</h2><div id="attempts"></div></div>
     <div id="siteSection" hidden><h2 id="sitesTitle">Sites visited</h2><div class="rows" id="sites"></div></div>
     <div id="compareWrap" hidden><h2>What the person asked vs what the agent understood</h2><table class="compare" id="compare"></table></div>
@@ -229,10 +220,13 @@ AA size</textarea></label>
   let steps = {}, payments = {}, outcomes = {}, selected = null, seen = 0, approvedFp = null, source = null;
 
   /* Segmented controls: one pressed button per group */
-  const value = id => $(id).querySelector('[aria-pressed="true"]')?.dataset.v;
+  // One task type, real payments. ?mode=offline exists only for automated page checks.
+  const q0 = new URLSearchParams(location.search);
+  const FIXED = { flights: 'task', model: 'sonnet', feedback: 'explain', mode: q0.get('mode') === 'offline' ? 'offline' : 'sandbox' };
+  const value = id => FIXED[id] ?? document.getElementById(id)?.querySelector('[aria-pressed="true"]')?.dataset.v;
   for (const id of ['taskText', 'taskBudget', 'taskMusts']) document.getElementById(id).addEventListener('input', () => brief());
   function setSeg(id, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); }
-  for (const id of ['flights', 'profile', 'req', 'mode', 'feedback', 'scrip', 'model']) $(id).onclick = e => {
+  for (const id of ['scrip']) $(id).onclick = e => {
     const b = e.target.closest('button');
     if (b && !b.disabled) { setSeg(id, b.dataset.v); brief(); }
   };
@@ -240,22 +234,10 @@ AA size</textarea></label>
   const isTask = () => value('flights') === 'task';
   function musts() { return $('taskMusts').value.split('\n').map(m => m.trim()).filter(Boolean); }
   function brief() {
-    const task = isTask();
-    $('taskbox').hidden = !task; $('modelWrap').hidden = !task;
-    $('profile').closest('.choice').hidden = task; $('req').closest('.choice').hidden = task;
-    $('merchantName').textContent = task ? 'Merchant' : 'Example Air';
-    $('toldK').textContent = 'The agent is told, word for word';
-    $('confirmedK').textContent = task ? 'Scrip checks every checkout against' : 'Scrip checks against what the person confirmed (the agent never sees this)';
-    if (task) {
-      const budget = Number($('taskBudget').value) || 0, m = musts();
-      $('toldV').textContent = `"Customer request: ${$('taskText').value.trim()}" Budget: $${budget.toFixed(2)} total.${m.length ? ' Must-haves: ' + m.join('; ') + '.' : ''}`;
-      $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') : ''}. A separate checker (Claude Haiku) judges each must-have.`;
-      return;
-    }
-    const src = cfg.sources[value('flights')] || { requests: {} };
-    $('toldV').textContent = '"Customer request: ' + (src.requests[value('req')] || '') + '"';
-    const c = src.requirements;
-    $('confirmedV').textContent = c ? `${c.from} to ${c.to}, ${c.departOn.slice(5)} to ${c.returnOn.slice(5)}, ${c.directOnly ? 'direct only' : 'stops ok'}, ${c.refundableOnly ? 'refundable' : 'any fare'}, up to ${usd(c.maxTotalCents)}` : '';
+    const budget = Number($('taskBudget').value) || 0, m = musts();
+    $('merchantName').textContent = 'Merchant';
+    $('toldV').textContent = `"Customer request: ${$('taskText').value.trim()}" Budget: $${budget.toFixed(2)} total.${m.length ? ' Must-haves: ' + m.join('; ') + '.' : ''}`;
+    $('confirmedV').textContent = `Budget $${budget.toFixed(2)}${m.length ? '. Must-haves: ' + m.join('; ') + '. A separate checker (Claude Haiku) judges each one' : ''}. Plus: the price and page must appear in what the agent actually read.`;
   }
 
   /* Plain-English timeline. Tool results fold into their call; bookkeeping events are hidden. */
@@ -337,7 +319,7 @@ AA size</textarea></label>
     renderMonitors();
     renderActivity();
   }
-  const SHORT = { unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
+  const SHORT = { page_failed: "Bought from a page it couldn't load", unseen_page: 'Cited a page it never opened', must_failed: 'Missed a must-have', must_unclear: 'Must-have not confirmed', misread: 'Misread the request', fixed_after_hint: 'Fixed only after being told', unseen_claim: 'Claimed something it never saw',
     source_unverified: "Couldn't verify its source", paid_not_approved: 'Paid for something not approved' };
   function renderMonitors() {
     const list = alerts[selected];
@@ -383,6 +365,9 @@ AA size</textarea></label>
   }
   const STATUS = { accepted: ['ok', 'Accepted'], approved: ['ok', 'Approved by you'], rejected: ['no', 'Rejected'], denied: ['no', 'Denied by you'], in_review: ['warn', 'In review'], failed: ['no', 'Failed on Natural'] };
   function renderActivity() {
+    const fin = (steps[selected] || []).find(x => x.type === 'agent_run_finished');
+    $('reportWrap').hidden = !fin || !fin.data.summary;
+    if (fin) $('report').textContent = fin.data.summary.replace(/\*\*/g, '');
     const a = activity[selected];
     $('paySection').hidden = !a || !a.attempts.length;
     $('siteSection').hidden = !a || !a.sites.length;
@@ -451,7 +436,7 @@ AA size</textarea></label>
   function setStop(id, text, cls) { $('n-' + id).className = 'stop ' + (cls || ''); $('n-' + id + '-s').textContent = text; }
   function progress(i, cls) { $('fill').style.width = (i * 25) + '%'; $('fill').className = 'fill ' + (cls || ''); }
   function resetRail() {
-    setStop('agent', 'Waiting'); setStop('scrip', 'Checks the purchase'); setStop('natural', 'Holds the payment'); setStop('merchant', 'Gets paid'); progress(0);
+    setStop('agent', 'Waiting'); setStop('scrip', 'Checks the purchase'); setStop('natural', 'Moves the money'); setStop('merchant', 'Gets paid'); progress(0);
   }
   function rail(s) {
     const d = s.data;
@@ -468,6 +453,7 @@ AA size</textarea></label>
       setStop('scrip', dec === 'accepted' ? (d.mode === 'observer' ? 'Observed, let it through' : 'Accepted the payment') : dec === 'rejected' ? 'Rejected the payment' : 'Held it for your review', dec === 'accepted' ? 'ok' : dec === 'rejected' ? 'no' : 'lit');
       progress(1, dec === 'accepted' ? 'ok' : dec === 'rejected' ? 'no' : '');
     }
+    if (s.type === 'agent_run_finished' && !(steps[s.scenario] || []).some(x => x.type === 'payment_attempted')) setStop('agent', 'Finished without buying', 'lit');
     if (s.type === 'payment_reviewed') { const ok = d.decision === 'approved'; setStop('scrip', ok ? 'You approved it' : 'You denied it', ok ? 'ok' : 'no'); progress(1, ok ? 'ok' : 'no'); }
     if (s.type === 'money_moved') { const paid = d.status === 'COMPLETED'; setStop('natural', paid ? 'Moved the money' : 'Transfer ' + d.status, paid ? 'ok' : 'no'); setStop('merchant', paid ? 'Paid ' + usd(d.amountCents) : 'Not paid', paid ? 'ok' : 'no'); progress(paid ? 3 : 2, paid ? 'ok' : 'no'); }
     if (s.type === 'payment_settled') { const paid = d.status === 'COMPLETED'; setStop('natural', paid ? 'Sent the money' : 'Kept it held', paid ? 'ok' : 'no'); setStop('merchant', paid ? 'Paid' : 'Not paid', paid ? 'ok' : 'no'); progress(paid ? 3 : 2, paid ? 'ok' : 'no'); }
@@ -482,18 +468,16 @@ AA size</textarea></label>
     if (s.type === 'payment_settled') { const paid = d.status === 'COMPLETED'; p.status = paid ? 'Completed' : 'Not paid'; p.tone = paid ? 'ok' : 'no'; }
   }
 
-  function start(scripted) {
+  function start() {
     steps = {}; payments = {}; outcomes = {}; alerts = {}; activity = {}; selected = null; seen = 0;
     $('monitors').innerHTML = '<p class="clear" style="color:var(--ink-2)">Watching the run.</p>';
     renderTabs(); renderTimeline(); renderNatural(); resetRail(); $('railNote').textContent = '';
-    $('run').disabled = $('scripted').disabled = true; $('status').textContent = 'Running';
-    if (scripted) { $('toldK').textContent = 'Every scripted agent gets'; $('toldV').textContent = '"' + SCRIPTED_REQUEST + '"'; } else brief();
+    $('run').disabled = true; $('status').textContent = 'Running';
+    brief();
     const mode = value('mode');
     const common = `mode=${mode}&feedback=${value('feedback')}&scrip=${value('scrip')}`;
-    const taskQuery = () => `flights=task&model=${encodeURIComponent(value('model') || 'sonnet')}&task=${encodeURIComponent($('taskText').value.trim())}&budget=${encodeURIComponent($('taskBudget').value)}&musts=${encodeURIComponent(musts().join('\n'))}`;
-    source = new EventSource(scripted ? '/run?mode=' + mode
-      : isTask() ? `/run-agent?${common}&${taskQuery()}`
-      : `/run-agent?${common}&flights=${value('flights')}&profile=${encodeURIComponent(value('profile'))}&request=${value('req')}`);
+    const taskQuery = `flights=task&model=${encodeURIComponent(value('model') || 'sonnet')}&task=${encodeURIComponent($('taskText').value.trim())}&budget=${encodeURIComponent($('taskBudget').value)}&musts=${encodeURIComponent(musts().join('\n'))}`;
+    source = new EventSource(`/run-agent?${common}&${taskQuery}`);
     source.addEventListener('step', e => {
       const s = JSON.parse(e.data);
       if (s.scenario !== selected) { selected = s.scenario; seen = 0; }
@@ -513,33 +497,26 @@ AA size</textarea></label>
       finish();
     });
   }
-  function finish() { $('run').disabled = $('scripted').disabled = false; source.close(); }
-  $('run').onclick = () => start(false);
-  $('scripted').onclick = () => start(true);
+  function finish() { $('run').disabled = false; source.close(); }
+  $('run').onclick = () => start();
 
-  // ?run=offline|sandbox runs the scripted agents on load; ?agent=careful&req=vague runs a real one.
+  // ?task=...&budget=...&musts=... starts a run on load (used for automated page checks).
   const q = new URLSearchParams(location.search);
   resetRail(); loadRecords(); loadOverview();
   fetch('/config').then(r => r.json()).then(c => {
     cfg = c;
-    $('profile').innerHTML = c.profiles.map((p, i) => `<button data-v="${esc(p.id)}" aria-pressed="${i === 0}">${esc(p.label)}</button>`).join('');
-    for (const p of c.profiles) { NAMES['real:' + p.id] = p.label + ', demo catalog'; NAMES['real:' + p.id + '-web'] = p.label + ', real web'; }
-    $('model').innerHTML = (c.taskModels || []).map((m, i) => `<button data-v="${esc(m.id)}" aria-pressed="${i === 0}">${esc(m.label)}</button>`).join('');
-    for (const m of c.taskModels || []) NAMES['real:task-' + m.id] = m.label + ', any purchase';
-    if (!c.sandboxAvailable) $('mode').querySelector('[data-v=sandbox]').disabled = true;
-    setSeg('mode', q.get('run') || c.defaultMode);
-    if (q.get('req')) setSeg('req', q.get('req'));
-    if (q.get('agent')) setSeg('profile', q.get('agent'));
-    if (q.get('flights')) setSeg('flights', q.get('flights'));
-    if (q.get('feedback')) setSeg('feedback', q.get('feedback'));
+    for (const m of c.taskModels || []) NAMES['real:task-' + m.id] = m.label;
+    if (FIXED.mode === 'sandbox' && !c.sandboxAvailable) {
+      $('run').disabled = true;
+      $('status').textContent = 'Natural sandbox keys are missing, so nothing can run';
+    }
+    if (FIXED.mode === 'offline') $('realNote').textContent = 'Page check mode: payments are simulated, not sent to Natural.';
     if (q.get('scrip')) setSeg('scrip', q.get('scrip'));
-    if (q.get('task')) { setSeg('flights', 'task'); $('taskText').value = q.get('task'); }
+    if (q.get('task')) $('taskText').value = q.get('task');
     if (q.get('budget')) $('taskBudget').value = q.get('budget');
     if (q.get('musts')) $('taskMusts').value = q.get('musts');
-    if (q.get('model')) setSeg('model', q.get('model'));
     brief();
-    if (q.get('run') === 'offline' || q.get('run') === 'sandbox') start(true);
-    else if (q.get('agent') || q.get('task')) start(false);
+    if (q.get('task')) start();
   }).catch(() => { $('status').textContent = 'Could not reach the server'; });
 </script>
 </body>

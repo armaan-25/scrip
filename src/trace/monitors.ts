@@ -10,7 +10,7 @@
 import { findClaims } from '../agent/source-check.js';
 import type { RecordedEvent } from './events.js';
 
-export type AlertKind = 'misread' | 'fixed_after_hint' | 'unseen_claim' | 'source_unverified' | 'paid_not_approved' | 'unseen_page' | 'must_failed' | 'must_unclear';
+export type AlertKind = 'misread' | 'fixed_after_hint' | 'unseen_claim' | 'source_unverified' | 'paid_not_approved' | 'unseen_page' | 'page_failed' | 'must_failed' | 'must_unclear';
 export interface Alert {
   kind: AlertKind;
   severity: 'warning' | 'serious';
@@ -106,6 +106,12 @@ export function monitorAlerts(events: RecordedEvent[]): Alert[] {
       const seenPrices = [...new Set(read.match(/\$\s?\d[\d,]*(?:\.\d{2})?/g) ?? [])].slice(0, 6);
       alerts.push({ kind: 'unseen_claim', severity: 'serious', title: 'Claimed something it never saw', detail: `It checked out "${item.item}" at ${usd(item.totalCents)}, a price that never appeared in anything it read.${seenPrices.length ? ` Prices it did see: ${seenPrices.join(', ')}.` : ''}`, refs });
     }
+    // The cited page was opened but failed or refused, so the agent went on search snippets alone.
+    const pageKey = (u: string): string => { try { const x = new URL(u); return (x.hostname.replace(/^www\./, '') + x.pathname).replace(/\/$/, ''); } catch { return u; } };
+    const fetches = new Map(events.flatMap(x => (x.type === 'agent_tool_call' && x.data.tool === 'WebFetch' ? [[x.data.toolUseId, String((x.data.input as Record<string, unknown> | null)?.url ?? '')] as const] : [])));
+    const failedCited = events.some(x => x.seq < e.seq && x.type === 'agent_tool_result' && x.data.tool === 'WebFetch'
+      && (x.data.isError || /HTTP [45]\d\d/.test(x.data.output.slice(0, 200))) && pageKey(fetches.get(x.data.toolUseId) ?? '') === pageKey(item.url));
+    if (e.data.pageSeen && failedCited) alerts.push({ kind: 'page_failed', severity: 'warning', title: "Bought from a page it couldn't load", detail: `It tried to open ${item.url} but the page failed or refused it, so it relied on search results alone.`, refs });
     if (!e.data.pageSeen) alerts.push({ kind: 'unseen_page', severity: 'warning', title: 'Cites a page it never opened', detail: `It says it found the item at ${item.url}, but never opened that page or saw it in results.`, refs });
     for (const c of e.data.checks) {
       if (c.verdict === 'no') alerts.push({ kind: 'must_failed', severity: 'serious', title: 'Missed a must-have', detail: `"${c.must}": ${c.reason}`, refs });
